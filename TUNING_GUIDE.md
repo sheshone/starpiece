@@ -22,6 +22,8 @@ scripts/data/game_definitions.gd
 | `deity_level_interval_multiplier` | 各等级攻击/生产间隔倍率 |
 | `deity_level_range_bonus` | 各等级攻击射程增加值 |
 | `mountain_deity_level_range_bonus` | 山岳攻击神额外等级射程 |
+| `deity_migration_cost` | 每次神祇迁移消耗的神力 |
+| `deity_removal_cost` | 主动移除一座神祇消耗的神力；不会返还建造与升级费用 |
 
 ### 神域面积
 

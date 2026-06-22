@@ -28,6 +28,9 @@ var deity_separator: HSeparator
 var upgrade_button: Button
 var upgrade_button_center: CenterContainer
 var migrate_button: Button
+var remove_button: Button
+var upgrade_cost_label: Label
+var remove_cost_label: Label
 var upgrade_preview: Label
 var popup_interactive: bool = false
 var card_hover_popup: PanelContainer
@@ -93,7 +96,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _build_edge_hud() -> void:
 	status_row = HBoxContainer.new()
-	status_row.position = Vector2(18, 48)
+	status_row.position = Vector2(4, 48)
 	status_row.size = Vector2(304, 60)
 	status_row.add_theme_constant_override("separation", 4)
 	add_child(status_row)
@@ -284,23 +287,41 @@ func _create_deity_popup() -> void:
 	deity_content.add_child(upgrade_preview)
 	upgrade_button_center = CenterContainer.new()
 	upgrade_button_center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	upgrade_button_center.visible = false
 	deity_content.add_child(upgrade_button_center)
 	var deity_action_row := HBoxContainer.new()
 	deity_action_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	deity_action_row.add_theme_constant_override("separation", 10)
+	deity_action_row.add_theme_constant_override("separation", 22)
 	upgrade_button_center.add_child(deity_action_row)
-	upgrade_button = _make_button("升级", deity_action_row, _upgrade_selected_deity)
+	var upgrade_action := VBoxContainer.new()
+	upgrade_action.alignment = BoxContainer.ALIGNMENT_CENTER
+	deity_action_row.add_child(upgrade_action)
+	upgrade_button = _make_button("升级", upgrade_action, _upgrade_selected_deity)
 	upgrade_button.visible = false
-	upgrade_button.custom_minimum_size = Vector2(104, 40)
-	AssetCatalog.apply_button_visual(upgrade_button)
-	migrate_button = _make_button("迁移", deity_action_row, _migrate_selected_deity)
+	upgrade_button.custom_minimum_size = Vector2(86, 86)
+	upgrade_button.set_meta("persistent_icon_outline", true)
+	AssetCatalog.apply_button_visual(upgrade_button, "action_upgrade", true, true)
+	upgrade_cost_label = Label.new()
+	upgrade_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	upgrade_cost_label.add_theme_font_size_override("font_size", 13)
+	upgrade_cost_label.add_theme_color_override("font_color", Color("f2dfbf"))
+	upgrade_action.add_child(upgrade_cost_label)
+	var remove_action := VBoxContainer.new()
+	remove_action.alignment = BoxContainer.ALIGNMENT_CENTER
+	deity_action_row.add_child(remove_action)
+	remove_button = _make_button("移除", remove_action, _remove_selected_deity)
+	remove_button.visible = false
+	remove_button.custom_minimum_size = Vector2(86, 86)
+	remove_button.set_meta("persistent_icon_outline", true)
+	AssetCatalog.apply_button_visual(remove_button, "action_remove", true, true)
+	remove_cost_label = Label.new()
+	remove_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	remove_cost_label.add_theme_font_size_override("font_size", 13)
+	remove_cost_label.add_theme_color_override("font_color", Color("f2dfbf"))
+	remove_action.add_child(remove_cost_label)
+	# 迁移入口只保留在右侧操作区；这里保留隐藏引用，兼容旧状态清理代码。
+	migrate_button = Button.new()
 	migrate_button.visible = false
-	migrate_button.custom_minimum_size = Vector2(82, 40)
-	AssetCatalog.apply_button_visual(
-		migrate_button,
-		"icon_move" if AssetCatalog.texture("icon_move") else "icon_remove",
-		true
-	)
 	deity_stat_row = HBoxContainer.new()
 	deity_stat_row.alignment = BoxContainer.ALIGNMENT_BEGIN
 	deity_stat_row.add_theme_constant_override("separation", 4)
@@ -453,7 +474,9 @@ func _show_deity(pos: Vector2i) -> void:
 	deity_separator.visible = false
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
+	remove_button.visible = false
 	migrate_button.visible = false
+	upgrade_button_center.visible = false
 	migrate_button.visible = false
 	popup_interactive = false
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -475,6 +498,7 @@ func _show_deity(pos: Vector2i) -> void:
 	deity_separator.visible = false
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
+	remove_button.visible = false
 	migrate_button.visible = false
 	popup_interactive = false
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -491,46 +515,35 @@ func _show_selected_deity(pos: Vector2i) -> void:
 	var deity := map.get_cell(pos).deity as DeityInstance if map else null
 	if not map or not deity:
 		return
-	attack_preview.text = map.deity_function_description(pos)
-	attack_preview.visible = true
-	_rebuild_deity_stat_icons(pos)
-	deity_stat_row.visible = true
 	_update_tactical_deity(pos)
+	_set_deity_popup_placement_mode()
+	upgrade_button_center.visible = true
 	popup_interactive = true
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_STOP
-	var current := map.deity_stats(pos)
-	if deity.level >= 3:
-		upgrade_preview.text = "等级 3（已达到当前上限）"
-		upgrade_button.visible = false
-	else:
-		var original_level := deity.level
-		deity.level += 1
-		var upgraded := map.deity_stats(pos)
-		deity.level = original_level
-		if deity.deity_type == GameDefinitions.DeityType.ATTACK:
-			upgrade_preview.text = (
-				"升级预览\n伤害：%d → %d\n生命：%d → %d\n射程：%.1f → %.1f\n攻击间隔：%.2f → %.2f 秒"
-				% [
-					current.damage, upgraded.damage,
-					current.max_hp, upgraded.max_hp,
-					current.range, upgraded.range,
-					current.interval, upgraded.interval,
-				]
-			)
-		else:
-			upgrade_preview.text = (
-				"升级预览\n产量：%.2f → %.2f\n生命：%d → %d\n生产间隔：%.2f → %.2f 秒"
-				% [current.amount, upgraded.amount, current.max_hp, upgraded.max_hp, current.interval, upgraded.interval]
-			)
-		upgrade_button.text = "×%.1f" % map.deity_upgrade_cost(deity.level)
-		upgrade_button.icon = AssetCatalog.texture("icon_divine_power")
-		upgrade_button.expand_icon = true
-		upgrade_button.tooltip_text = "升级到 %d 级" % (deity.level + 1)
-		upgrade_button.disabled = not ResourceManager.can_afford(map.deity_upgrade_cost(deity.level))
-		upgrade_button.visible = TurnManager.current_phase == TurnManager.Phase.BUILD
-	upgrade_preview.visible = true
-	migrate_button.visible = TurnManager.current_phase == TurnManager.Phase.BUILD
-	deity_popup.custom_minimum_size = Vector2(350, 300)
+	popup_title.visible = false
+	attack_preview.visible = false
+	resource_preview.visible = false
+	deity_stat_row.visible = false
+	upgrade_preview.visible = false
+	deity_button_row.visible = false
+	deity_separator.visible = false
+	var can_operate := TurnManager.current_phase == TurnManager.Phase.BUILD
+	var upgrade_cost := map.deity_upgrade_cost(deity.level)
+	upgrade_button.visible = can_operate
+	upgrade_button.disabled = deity.level >= 3 or not ResourceManager.can_afford(upgrade_cost)
+	upgrade_button.tooltip_text = (
+		"已达到最高等级"
+		if deity.level >= 3
+		else "升级到 %d 级" % (deity.level + 1)
+	)
+	upgrade_cost_label.text = "已满级" if deity.level >= 3 else "神力 %.1f" % upgrade_cost
+	remove_button.visible = can_operate
+	var removal_cost := map.deity_removal_cost()
+	remove_button.disabled = not ResourceManager.can_afford(removal_cost)
+	remove_button.tooltip_text = "移除该神祇"
+	remove_cost_label.text = "神力 %.1f" % removal_cost
+	migrate_button.visible = false
+	deity_popup.custom_minimum_size = Vector2(230, 132)
 	deity_popup.reset_size()
 	_position_popup(pos)
 	_reveal_deity_popup()
@@ -566,6 +579,16 @@ func _upgrade_selected_deity() -> void:
 		_show_selected_deity(popup_position)
 
 
+func _remove_selected_deity() -> void:
+	var map := _get_map()
+	if not map or popup_position == Vector2i(-1, -1):
+		return
+	if map.remove_deity(popup_position):
+		deity_popup.visible = false
+		popup_interactive = false
+		_set_tactical_info("资讯", "点击神祇、敌人或核心查看详细信息。")
+
+
 func _show_hovered_cell(pos: Vector2i) -> void:
 	if popup_interactive:
 		return
@@ -592,7 +615,9 @@ func _show_enemy_info(pos: Vector2i) -> void:
 		return
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
+	remove_button.visible = false
 	migrate_button.visible = false
+	upgrade_button_center.visible = false
 	deity_stat_row.visible = false
 	var description := map.enemy_description(pos)
 	if description.is_empty():
@@ -672,7 +697,9 @@ func _show_core_info() -> void:
 	return
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
+	remove_button.visible = false
 	deity_popup.visible = false
+	upgrade_button_center.visible = false
 	popup_position = Vector2i(-1, -1)
 	popup_title.text = "中央核心"
 	attack_preview.text = "生命：%d / %d\n敌人接近后会攻击核心并消失；若它原本站在有效地形上，该格会增加污染。" % [
@@ -741,7 +768,9 @@ func _show_terrain_info(pos: Vector2i) -> void:
 		return
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
+	remove_button.visible = false
 	migrate_button.visible = false
+	upgrade_button_center.visible = false
 	deity_stat_row.visible = false
 	popup_position = pos
 	popup_title.text = "%s地块" % GameDefinitions.TERRAIN_NAMES[map.get_cell(pos).terrain]
@@ -769,7 +798,9 @@ func _show_terrain_deities(pos: Vector2i) -> void:
 		return
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
+	remove_button.visible = false
 	migrate_button.visible = false
+	upgrade_button_center.visible = false
 	deity_stat_row.visible = false
 	popup_position = pos
 	popup_title.text = "在%s地块安置神祇" % GameDefinitions.TERRAIN_NAMES[map.get_cell(pos).terrain]
@@ -994,7 +1025,7 @@ func _create_settings_panel() -> void:
 
 func _create_tactical_panel() -> void:
 	tactical_panel = Control.new()
-	tactical_panel.position = Vector2(0, 205)
+	tactical_panel.position = Vector2(-24, 205)
 	tactical_panel.size = Vector2(380, 570)
 	tactical_panel.z_index = 80
 	add_child(tactical_panel)
@@ -1005,11 +1036,11 @@ func _create_tactical_panel() -> void:
 	board.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	board.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tactical_panel.add_child(board)
-	status_row.position = Vector2(28, 125)
+	status_row.position = Vector2(4, 125)
 	status_row.size = Vector2(304, 58)
 	status_row.z_index = 82
 	var title_paper := PanelContainer.new()
-	title_paper.position = Vector2(78, 46)
+	title_paper.position = Vector2(78, 62)
 	title_paper.size = Vector2(224, 66)
 	title_paper.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	AssetCatalog.apply_panel_background(title_paper, "stats_background")
@@ -1023,15 +1054,15 @@ func _create_tactical_panel() -> void:
 	tactical_title.text = "资讯"
 	title_paper.add_child(tactical_title)
 	tactical_stat_row = HBoxContainer.new()
-	tactical_stat_row.position = Vector2(72, 122)
+	tactical_stat_row.position = Vector2(72, 142)
 	tactical_stat_row.size = Vector2(236, 72)
 	tactical_stat_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	tactical_stat_row.add_theme_constant_override("separation", 2)
 	tactical_stat_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tactical_panel.add_child(tactical_stat_row)
 	var margin := MarginContainer.new()
-	margin.position = Vector2(72, 198)
-	margin.size = Vector2(236, 254)
+	margin.position = Vector2(72, 222)
+	margin.size = Vector2(236, 230)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tactical_panel.add_child(margin)
 	tactical_label = Label.new()

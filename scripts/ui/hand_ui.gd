@@ -77,7 +77,7 @@ func _show_shop(slots: Array) -> void:
 			empty.add_child(empty_art)
 			add_child(empty)
 			shop_nodes.append(empty)
-	_build_shop_controls(Vector2(1506, 282), Vector2(1506, 650))
+	_build_shop_controls(Vector2(1580, 282), Vector2(1580, 650))
 
 
 func _purchase(index: int) -> void:
@@ -88,7 +88,7 @@ func _purchase(index: int) -> void:
 func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) -> void:
 	var controls := Control.new()
 	controls.position = Vector2.ZERO
-	controls.size = Vector2(1680, 1000)
+	controls.size = Vector2(1800, 1000)
 	controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(controls)
 	shop_controls.append(controls)
@@ -109,8 +109,8 @@ func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) 
 	AssetCatalog.apply_button_visual(refresh, "icon_refresh", true, true)
 	controls.add_child(refresh)
 	var migrate := Button.new()
-	migrate.text = "布置神祇"
-	migrate.tooltip_text = "布置／迁移神祇"
+	migrate.text = "迁移神祇"
+	migrate.tooltip_text = "进入神祇迁移模式"
 	migrate.position = migrate_position
 	migrate.size = Vector2(104, 104)
 	migrate.custom_minimum_size = Vector2(104, 104)
@@ -123,7 +123,7 @@ func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) 
 	)
 	AssetCatalog.apply_button_visual(
 		migrate,
-		"icon_move" if AssetCatalog.texture("icon_move") else "icon_remove",
+		"action_move" if AssetCatalog.texture("action_move") else "icon_move",
 		true,
 		true
 	)

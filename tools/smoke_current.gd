@@ -81,6 +81,19 @@ func _run() -> void:
 	if deity.level != 2 or deity.hp != 5 or deity.attack_count != 3:
 		_fail("migration did not preserve state")
 		return
+	var power_before_remove := float(resource_manager.divine_power)
+	if not map.remove_deity(target):
+		_fail("deity removal could not finish")
+		return
+	if map.get_cell(target).deity != null:
+		_fail("deity removal left the deity on the map")
+		return
+	if not is_equal_approx(
+		float(resource_manager.divine_power),
+		power_before_remove - float(Definitions.BALANCE.deity_removal_cost)
+	):
+		_fail("deity removal charged the wrong cost")
+		return
 	map.get_cell(source).enemy = EnemyData.create(1)
 	if bool(game.call("can_end_combat")):
 		_fail("combat can end while an enemy remains")

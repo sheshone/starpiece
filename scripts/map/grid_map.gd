@@ -736,6 +736,30 @@ func upgrade_deity(pos: Vector2i) -> bool:
 	return true
 
 
+func deity_removal_cost() -> float:
+	return float(GameDefinitions.BALANCE.deity_removal_cost)
+
+
+func remove_deity(pos: Vector2i) -> bool:
+	if TurnManager.current_phase != TurnManager.Phase.BUILD:
+		GameManager.reject_action("战斗阶段不能移除神祇")
+		return false
+	if not is_in_bounds(pos) or not get_cell(pos).deity:
+		return false
+	var cost := deity_removal_cost()
+	if not ResourceManager.spend(cost):
+		GameManager.reject_action("移除需要 %.1f 神力" % cost)
+		return false
+	get_cell(pos).deity = null
+	selected_pos = Vector2i(-1, -1)
+	recalculate_all_deities()
+	board_changed.emit()
+	selection_cleared.emit()
+	GameManager.post_message("神祇已移除")
+	queue_redraw()
+	return true
+
+
 func _recalculate_deity(pos: Vector2i) -> void:
 	var deity := get_cell(pos).deity as DeityInstance
 	if not deity:

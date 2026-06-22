@@ -28,7 +28,7 @@ EnemyManager="*res://scripts/autoload/enemy_manager.gd"
 
 [display]
 
-window/size/viewport_width=1680
+window/size/viewport_width=1800
 window/size/viewport_height=1000
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
