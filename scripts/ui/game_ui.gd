@@ -775,13 +775,24 @@ func _finish_show_core_info(core_position: Vector2i) -> void:
 
 
 func _show_terrain_info(pos: Vector2i) -> void:
-	_set_deity_popup_paper_mode()
-	core_info_popup.visible = false
 	if popup_interactive:
 		return
 	var map := _get_map()
 	if not map:
 		return
+	deity_popup.visible = false
+	core_info_label.text = "%s地块" % GameDefinitions.TERRAIN_NAMES[map.get_cell(pos).terrain]
+	var anchor := map.to_global(
+		map.grid_to_world(pos) + Vector2(map.CELL_SIZE + 12, 8)
+	)
+	var viewport_size := get_viewport_rect().size
+	core_info_popup.position = Vector2(
+		clampf(anchor.x, 8.0, viewport_size.x - 128.0),
+		clampf(anchor.y, 8.0, viewport_size.y - 56.0)
+	)
+	core_info_popup.size = Vector2(120, 48)
+	core_info_popup.visible = true
+	return
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
 	remove_button.visible = false
