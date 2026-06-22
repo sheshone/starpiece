@@ -1,0 +1,43 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="CardDemo"
+run/main_scene="res://scenes/game.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+GameManager="*res://scripts/autoload/game_manager.gd"
+TurnManager="*res://scripts/autoload/turn_manager.gd"
+ResourceManager="*res://scripts/autoload/resource_manager.gd"
+CardManager="*res://scripts/autoload/card_manager.gd"
+AssetCatalog="*res://scripts/autoload/asset_catalog.gd"
+AudioManager="*res://scripts/autoload/audio_manager.gd"
+ProgressManager="*res://scripts/autoload/progress_manager.gd"
+EnemyManager="*res://scripts/autoload/enemy_manager.gd"
+
+[display]
+
+window/size/viewport_width=1680
+window/size/viewport_height=1000
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

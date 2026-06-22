@@ -1,0 +1,63 @@
+[gd_resource type="SpriteFrames" format=3]
+
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_idle_00.png" id="1_05pwq"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_idle_01.png" id="2_ybymr"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_idle_02.png" id="3_gsa3b"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_idle_03.png" id="4_fo67n"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_idle_04.png" id="5_6dpwb"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_idle_05.png" id="6_nihbl"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_produce_00.png" id="7_rgylc"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_produce_01.png" id="8_ve661"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_produce_02.png" id="9_bt6mf"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_produce_03.png" id="10_a8xun"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_produce_04.png" id="11_hw0uo"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_mountain_produce_05.png" id="12_5w5et"]
+
+[resource]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("1_05pwq")
+}, {
+"duration": 1.0,
+"texture": ExtResource("2_ybymr")
+}, {
+"duration": 1.0,
+"texture": ExtResource("3_gsa3b")
+}, {
+"duration": 1.0,
+"texture": ExtResource("4_fo67n")
+}, {
+"duration": 1.0,
+"texture": ExtResource("5_6dpwb")
+}, {
+"duration": 1.0,
+"texture": ExtResource("6_nihbl")
+}],
+"loop": 1,
+"name": &"idle",
+"speed": 7.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("7_rgylc")
+}, {
+"duration": 1.0,
+"texture": ExtResource("8_ve661")
+}, {
+"duration": 1.0,
+"texture": ExtResource("9_bt6mf")
+}, {
+"duration": 1.0,
+"texture": ExtResource("10_a8xun")
+}, {
+"duration": 1.0,
+"texture": ExtResource("11_hw0uo")
+}, {
+"duration": 1.0,
+"texture": ExtResource("12_5w5et")
+}],
+"loop": 0,
+"name": &"produce",
+"speed": 10.0
+}]

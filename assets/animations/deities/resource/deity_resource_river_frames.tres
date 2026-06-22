@@ -1,0 +1,63 @@
+[gd_resource type="SpriteFrames" format=3]
+
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_idle_00.png" id="1_4h3j7"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_idle_01.png" id="2_sehj8"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_idle_02.png" id="3_eunm7"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_idle_03.png" id="4_qtvts"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_idle_04.png" id="5_qo5xx"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_idle_05.png" id="6_ili6s"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_produce_00.png" id="7_vypp7"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_produce_01.png" id="8_3enth"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_produce_02.png" id="9_jbem6"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_produce_03.png" id="10_f00cx"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_produce_04.png" id="11_ajs2b"]
+[ext_resource type="Texture2D" path="res://assets/art/deities/resource/deity_resource_river_produce_05.png" id="12_jqc3k"]
+
+[resource]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("1_4h3j7")
+}, {
+"duration": 1.0,
+"texture": ExtResource("2_sehj8")
+}, {
+"duration": 1.0,
+"texture": ExtResource("3_eunm7")
+}, {
+"duration": 1.0,
+"texture": ExtResource("4_qtvts")
+}, {
+"duration": 1.0,
+"texture": ExtResource("5_qo5xx")
+}, {
+"duration": 1.0,
+"texture": ExtResource("6_ili6s")
+}],
+"loop": 1,
+"name": &"idle",
+"speed": 7.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("7_vypp7")
+}, {
+"duration": 1.0,
+"texture": ExtResource("8_3enth")
+}, {
+"duration": 1.0,
+"texture": ExtResource("9_jbem6")
+}, {
+"duration": 1.0,
+"texture": ExtResource("10_f00cx")
+}, {
+"duration": 1.0,
+"texture": ExtResource("11_ajs2b")
+}, {
+"duration": 1.0,
+"texture": ExtResource("12_jqc3k")
+}],
+"loop": 0,
+"name": &"produce",
+"speed": 10.0
+}]

@@ -1,0 +1,9 @@
+# Godot 4+ specific ignores
+.godot/
+.claude/
+/android/
+/build/
+/expo/*.exe
+/expo/sp_demo_0622/
+*.pck
+*.log

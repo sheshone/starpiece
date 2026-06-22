@@ -1,0 +1,77 @@
+[gd_scene format=3 uid="uid://cmaingame"]
+
+[ext_resource type="Script" uid="uid://caj5uv6ar4hjo" path="res://scripts/game.gd" id="1_game"]
+[ext_resource type="Script" uid="uid://c18i03kqwv4ls" path="res://scripts/map/grid_map.gd" id="2_grid"]
+[ext_resource type="Script" uid="uid://cbb1yay75ks76" path="res://scripts/ui/resource_ui.gd" id="3_resui"]
+[ext_resource type="Script" uid="uid://bdc6ujjfl6f2c" path="res://scripts/ui/hand_ui.gd" id="4_handui"]
+[ext_resource type="Script" uid="uid://ckrtimtkq007k" path="res://scripts/ui/game_ui.gd" id="5_gameui"]
+[ext_resource type="Script" uid="uid://bmyp32hpnvbe5" path="res://scripts/ui/start_screen.gd" id="6_start"]
+[ext_resource type="Script" uid="uid://bjxip5lv53r54" path="res://scripts/ui/game_backdrop.gd" id="7_backdrop"]
+[ext_resource type="Script" uid="uid://kdptscrv78do" path="res://scripts/ui/map_frame_overlay.gd" id="8_frame"]
+[node name="MainGame" type="Node2D" unique_id=1175672515]
+script = ExtResource("1_game")
+
+[node name="Backdrop" type="Control" parent="." unique_id=330451404]
+z_index = -1
+custom_minimum_size = Vector2(2000, 1200)
+layout_mode = 3
+anchors_preset = 0
+offset_right = 2000.0
+offset_bottom = 1200.0
+mouse_filter = 2
+script = ExtResource("7_backdrop")
+
+[node name="GameMap" type="Node2D" parent="." unique_id=645724465]
+position = Vector2(390, 62)
+scale = Vector2(1.52, 1.52)
+script = ExtResource("2_grid")
+
+[node name="MapFrameOverlay" type="Control" parent="." unique_id=1142451769]
+z_index = 20
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1680.0
+offset_bottom = 1000.0
+mouse_filter = 2
+script = ExtResource("8_frame")
+
+[node name="EnemyContainer" type="Node2D" parent="." unique_id=1096723503]
+
+[node name="UICanvas" type="CanvasLayer" parent="." unique_id=1490731177]
+
+[node name="ResourceUI" type="Control" parent="UICanvas" unique_id=1483059282]
+layout_mode = 3
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 84.0
+grow_horizontal = 2
+script = ExtResource("3_resui")
+
+[node name="GameUI" type="Control" parent="UICanvas" unique_id=1448653231]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("5_gameui")
+
+[node name="HandUI" type="Control" parent="UICanvas" unique_id=997172265]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("4_handui")
+
+[node name="StartScreen" type="Control" parent="UICanvas" unique_id=1712554270]
+z_index = 200
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("6_start")
