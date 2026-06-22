@@ -22,7 +22,7 @@ mouse_filter = 2
 script = ExtResource("7_backdrop")
 
 [node name="GameMap" type="Node2D" parent="." unique_id=645724465]
-position = Vector2(390, 62)
+position = Vector2(350, 62)
 scale = Vector2(1.52, 1.52)
 script = ExtResource("2_grid")
 

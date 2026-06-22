@@ -70,9 +70,9 @@ const BALANCE := {
 	# 攻击/生产间隔倍率；数值越小，行动越快。
 	"deity_level_interval_multiplier": {1: 1.0, 2: 0.88, 3: 0.74},
 	# 所有攻击神升级后直接增加的射程格数。
-	"deity_level_range_bonus": {1: 0.0, 2: 1.0, 3: 2.0},
+	"deity_level_range_bonus": {1: 0.0, 2: 1.5, 3: 3.0},
 	# 山地攻击神在通用升级射程之外额外获得的射程。
-	"mountain_deity_level_range_bonus": {1: 0.0, 2: 0.5, 3: 1.0},
+	"mountain_deity_level_range_bonus": {1: 0.0, 2: 0.75, 3: 1.5},
 
 	# ── 建造与卡牌费用 ─────────────────────────────────────────────
 	# 地块卡按照所含格数定价，键为格数。

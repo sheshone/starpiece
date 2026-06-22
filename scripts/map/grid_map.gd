@@ -1936,7 +1936,7 @@ func _draw_selected_attack_range() -> void:
 			else 1.0
 		)
 	)
-	var reveal := clampf((pulse_time - range_reveal_started_at) / 0.52, 0.0, 1.0)
+	var reveal := clampf((pulse_time - range_reveal_started_at) / 0.34, 0.0, 1.0)
 	reveal = smoothstep(0.0, 1.0, reveal)
 	var center := grid_to_world(selected_pos) + Vector2.ONE * CELL_SIZE * 0.5
 	var visual_radius := (attack_range + 0.45) * CELL_SIZE * reveal

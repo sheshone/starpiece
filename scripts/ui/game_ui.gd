@@ -47,7 +47,9 @@ var cheat_panel: PanelContainer
 var deity_stat_row: HBoxContainer
 var settings_panel: PanelContainer
 var tactical_panel: Control
+var tactical_title: Label
 var tactical_label: Label
+var tactical_stat_row: HBoxContainer
 
 
 func _ready() -> void:
@@ -398,13 +400,13 @@ func _show_shop_card_info(card: CardBase, global_rect: Rect2) -> void:
 	card_hover_body.visible = false
 	card_hover_popup.position = Vector2(
 		clampf(
-			global_rect.position.x - card_hover_popup.custom_minimum_size.x - 12.0,
+			global_rect.get_center().x - card_hover_popup.custom_minimum_size.x * 0.5,
 			8.0,
 			get_viewport_rect().size.x - card_hover_popup.custom_minimum_size.x - 8.0
 		),
 		clampf(
-			global_rect.get_center().y - card_hover_popup.custom_minimum_size.y * 0.5 + 8.0,
-			90.0,
+			global_rect.position.y - card_hover_popup.custom_minimum_size.y - 6.0,
+			4.0,
 			get_viewport_rect().size.y - card_hover_popup.custom_minimum_size.y - 8.0
 		)
 	)
@@ -613,8 +615,6 @@ func _show_enemy_info(pos: Vector2i) -> void:
 	deity_popup.visible = true
 	_position_popup(pos)
 	return
-	if tactical_label:
-		tactical_label.text = "侵蚀体\n%s" % description
 
 
 func _show_selected_enemy_info(pos: Vector2i) -> void:
@@ -624,7 +624,7 @@ func _show_selected_enemy_info(pos: Vector2i) -> void:
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_STOP
 	var map := _get_map()
 	if map and tactical_label:
-		tactical_label.text = "侵蚀体\n\n%s" % map.enemy_description(pos)
+		_set_tactical_info("侵蚀体", map.enemy_description(pos))
 
 
 func _show_core_info() -> void:
@@ -703,9 +703,23 @@ func _show_selected_core_info() -> void:
 	_show_core_info()
 	popup_interactive = true
 	if tactical_label:
-		tactical_label.text = (
-			"中央核心\n\n生命 %d / %d\n神力 %.1f\n\n敌人抵达后会攻击核心；生命降到 0 时本局失败。"
-			% [GameManager.core_hp, GameManager.core_max_hp, ResourceManager.divine_power]
+		_set_tactical_info(
+			"中央核心",
+			"敌人抵达后会攻击核心；生命降到 0 时本局失败。"
+		)
+		_add_icon_stat(
+			tactical_stat_row,
+			"icon_core_hp",
+			"icon_core_hp",
+			"%d/%d" % [GameManager.core_hp, GameManager.core_max_hp],
+			"生命"
+		)
+		_add_icon_stat(
+			tactical_stat_row,
+			"icon_divine_power",
+			"icon_divine_power",
+			"%.1f" % ResourceManager.divine_power,
+			"神力"
 		)
 
 
@@ -980,7 +994,7 @@ func _create_settings_panel() -> void:
 
 func _create_tactical_panel() -> void:
 	tactical_panel = Control.new()
-	tactical_panel.position = Vector2(5, 205)
+	tactical_panel.position = Vector2(0, 205)
 	tactical_panel.size = Vector2(380, 570)
 	tactical_panel.z_index = 80
 	add_child(tactical_panel)
@@ -994,10 +1008,30 @@ func _create_tactical_panel() -> void:
 	status_row.position = Vector2(28, 125)
 	status_row.size = Vector2(304, 58)
 	status_row.z_index = 82
+	var title_paper := PanelContainer.new()
+	title_paper.position = Vector2(78, 46)
+	title_paper.size = Vector2(224, 66)
+	title_paper.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	AssetCatalog.apply_panel_background(title_paper, "stats_background")
+	tactical_panel.add_child(title_paper)
+	tactical_title = Label.new()
+	tactical_title.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	tactical_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tactical_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	tactical_title.add_theme_font_size_override("font_size", 18)
+	tactical_title.add_theme_color_override("font_color", Color("4b2d1a"))
+	tactical_title.text = "资讯"
+	title_paper.add_child(tactical_title)
+	tactical_stat_row = HBoxContainer.new()
+	tactical_stat_row.position = Vector2(72, 122)
+	tactical_stat_row.size = Vector2(236, 72)
+	tactical_stat_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	tactical_stat_row.add_theme_constant_override("separation", 2)
+	tactical_stat_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tactical_panel.add_child(tactical_stat_row)
 	var margin := MarginContainer.new()
-	# board.png 的文字安全区：横向约 1/7～6/7，纵向约 1/5～4/5。
-	margin.position = Vector2(54, 114)
-	margin.size = Vector2(272, 342)
+	margin.position = Vector2(72, 198)
+	margin.size = Vector2(236, 254)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tactical_panel.add_child(margin)
 	tactical_label = Label.new()
@@ -1005,11 +1039,18 @@ func _create_tactical_panel() -> void:
 	tactical_label.add_theme_font_size_override("font_size", 14)
 	tactical_label.add_theme_color_override("font_color", Color("ead9bc"))
 	tactical_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	tactical_label.text = (
-		"战术面板\n\n生命 %d / %d\n神力 %.1f\n\n"
-		+ "八座神祇关键词\n迅击　追踪\n炮击　弹射\n丰收　绽放\n蕴藏　流转"
-	) % [GameManager.core_hp, GameManager.core_max_hp, ResourceManager.divine_power]
+	tactical_label.text = "点击神祇、敌人或核心查看详细信息。"
 	margin.add_child(tactical_label)
+
+
+func _set_tactical_info(title: String, body: String) -> void:
+	if tactical_title:
+		tactical_title.text = title
+	if tactical_label:
+		tactical_label.text = body
+	if tactical_stat_row:
+		for child in tactical_stat_row.get_children():
+			child.queue_free()
 
 
 func _update_tactical_deity(pos: Vector2i) -> void:
@@ -1024,43 +1065,26 @@ func _update_tactical_deity(pos: Vector2i) -> void:
 	var detail_neighbors: Array = detail_context.get("adjacent_deities", [])
 	var detail_area_text := "不大" if detail_area <= 2 else ("比较大" if detail_area <= 6 else "很大")
 	var detail_friend_text := (
-		"没有"
+		"不与其他神域"
 		if detail_neighbors.is_empty()
-		else ("一个" if detail_neighbors.size() == 1 else ("一些" if detail_neighbors.size() <= 3 else "许多"))
+		else ("与一个神域" if detail_neighbors.size() == 1 else ("与一些神域" if detail_neighbors.size() <= 3 else "与许多神域"))
 	)
 	var detail_stats := map.deity_stats(pos)
-	var detail_stat_text := (
-		"伤害 %d　射程 %.1f　间隔 %.2f 秒"
-		% [int(detail_stats.damage), float(detail_stats.range), float(detail_stats.interval)]
-		if deity.deity_type == GameDefinitions.DeityType.ATTACK
-		else "产量 %.2f　间隔 %.2f 秒" % [float(detail_stats.amount), float(detail_stats.interval)]
+	_set_tactical_info(
+		map.deity_form_name(pos, deity.deity_type),
+		"神域%s，%s相邻。\n\n%s" % [
+			detail_area_text,
+			detail_friend_text,
+			map.deity_function_description(pos),
+		]
 	)
-	tactical_label.text = "%s\n\n等级 %d　生命 %d/%d\n%s\n神域%s，与%s朋友相邻\n\n%s" % [
-		map.deity_form_name(pos, deity.deity_type),
-		deity.level,
-		deity.hp,
-		deity.max_hp,
-		detail_stat_text,
-		detail_area_text,
-		detail_friend_text,
-		map.deity_function_description(pos),
-	]
-	return
-	var context := map.deity_domain_context(pos)
-	var area := int(context.get("area", 1))
-	var neighbor_positions: Array = context.get("adjacent_deities", [])
-	var neighbors_count := neighbor_positions.size()
-	var area_text := "不大" if area <= 2 else ("比较大" if area <= 6 else "很大")
-	var friend_text := "没有" if neighbors_count == 0 else ("一个" if neighbors_count == 1 else ("一些" if neighbors_count <= 3 else "许多"))
-	tactical_label.text = "%s\n\n等级 %d　生命 %d/%d\n神域%s\n与%s朋友相邻\n\n%s" % [
-		map.deity_form_name(pos, deity.deity_type),
-		deity.level,
-		deity.hp,
-		deity.max_hp,
-		area_text,
-		friend_text,
-		map.deity_function_description(pos),
-	]
+	_add_icon_stat(tactical_stat_row, "icon_level", "icon_shaping", str(deity.level), "等级")
+	_add_icon_stat(tactical_stat_row, "icon_core_hp", "icon_core_hp", "%d/%d" % [deity.hp, deity.max_hp], "生命")
+	if deity.deity_type == GameDefinitions.DeityType.ATTACK:
+		_add_icon_stat(tactical_stat_row, "icon_damage", "icon_attack_deity", str(int(detail_stats.damage)), "伤害")
+		_add_icon_stat(tactical_stat_row, "icon_range", "icon_attack_deity", "%.1f" % float(detail_stats.range), "射程")
+	else:
+		_add_icon_stat(tactical_stat_row, "icon_production", "icon_resource_deity", "%.2f" % float(detail_stats.amount), "产量")
 
 
 func _toggle_settings() -> void:
