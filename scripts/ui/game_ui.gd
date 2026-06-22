@@ -216,6 +216,21 @@ func _make_button(text: String, parent: Node, callback: Callable) -> Button:
 	return button
 
 
+func _make_power_cost_row(value_label: Label) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 3)
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(20, 20)
+	icon.texture = AssetCatalog.texture("icon_divine_power")
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(icon)
+	row.add_child(value_label)
+	return row
+
+
 func _apply_dark_info_panel(panel: PanelContainer) -> void:
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.035, 0.045, 0.06, 0.91)
@@ -305,7 +320,7 @@ func _create_deity_popup() -> void:
 	upgrade_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	upgrade_cost_label.add_theme_font_size_override("font_size", 13)
 	upgrade_cost_label.add_theme_color_override("font_color", Color("f2dfbf"))
-	upgrade_action.add_child(upgrade_cost_label)
+	upgrade_action.add_child(_make_power_cost_row(upgrade_cost_label))
 	var remove_action := VBoxContainer.new()
 	remove_action.alignment = BoxContainer.ALIGNMENT_CENTER
 	deity_action_row.add_child(remove_action)
@@ -318,7 +333,7 @@ func _create_deity_popup() -> void:
 	remove_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	remove_cost_label.add_theme_font_size_override("font_size", 13)
 	remove_cost_label.add_theme_color_override("font_color", Color("f2dfbf"))
-	remove_action.add_child(remove_cost_label)
+	remove_action.add_child(_make_power_cost_row(remove_cost_label))
 	# 迁移入口只保留在右侧操作区；这里保留隐藏引用，兼容旧状态清理代码。
 	migrate_button = Button.new()
 	migrate_button.visible = false
@@ -395,21 +410,22 @@ func _create_core_info_popup() -> void:
 	core_info_popup = PanelContainer.new()
 	core_info_popup.visible = false
 	core_info_popup.z_index = 105
-	core_info_popup.custom_minimum_size = Vector2(360, 180)
-	core_info_popup.size = Vector2(360, 180)
+	core_info_popup.custom_minimum_size = Vector2(120, 48)
+	core_info_popup.size = Vector2(120, 48)
 	core_info_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_dark_info_panel(core_info_popup)
 	add_child(core_info_popup)
 	var core_margin := MarginContainer.new()
-	core_margin.add_theme_constant_override("margin_left", 38)
-	core_margin.add_theme_constant_override("margin_right", 24)
-	core_margin.add_theme_constant_override("margin_top", 40)
-	core_margin.add_theme_constant_override("margin_bottom", 20)
+	core_margin.add_theme_constant_override("margin_left", 0)
+	core_margin.add_theme_constant_override("margin_right", 0)
+	core_margin.add_theme_constant_override("margin_top", 0)
+	core_margin.add_theme_constant_override("margin_bottom", 0)
 	core_info_popup.add_child(core_margin)
 	core_info_label = Label.new()
-	core_info_label.custom_minimum_size = Vector2(298, 120)
-	core_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	core_info_label.add_theme_font_size_override("font_size", 17)
+	core_info_label.custom_minimum_size = Vector2(100, 28)
+	core_info_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	core_info_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	core_info_label.add_theme_font_size_override("font_size", 15)
 	core_info_label.add_theme_color_override("font_color", Color("eadbc4"))
 	core_margin.add_child(core_info_label)
 
@@ -536,12 +552,12 @@ func _show_selected_deity(pos: Vector2i) -> void:
 		if deity.level >= 3
 		else "升级到 %d 级" % (deity.level + 1)
 	)
-	upgrade_cost_label.text = "已满级" if deity.level >= 3 else "神力 %.1f" % upgrade_cost
+	upgrade_cost_label.text = "已满级" if deity.level >= 3 else "%.1f" % upgrade_cost
 	remove_button.visible = can_operate
 	var removal_cost := map.deity_removal_cost()
 	remove_button.disabled = not ResourceManager.can_afford(removal_cost)
 	remove_button.tooltip_text = "移除该神祇"
-	remove_cost_label.text = "神力 %.1f" % removal_cost
+	remove_cost_label.text = "%.1f" % removal_cost
 	migrate_button.visible = false
 	deity_popup.custom_minimum_size = Vector2(230, 132)
 	deity_popup.reset_size()
@@ -667,10 +683,10 @@ func _show_core_info() -> void:
 	)
 	var hover_viewport := get_viewport_rect().size
 	core_info_popup.position = Vector2(
-		clampf(hover_anchor.x, 8.0, hover_viewport.x - 198.0),
-		clampf(hover_anchor.y, 8.0, hover_viewport.y - 72.0)
+		clampf(hover_anchor.x, 8.0, hover_viewport.x - 128.0),
+		clampf(hover_anchor.y, 8.0, hover_viewport.y - 56.0)
 	)
-	core_info_popup.size = Vector2(190, 64)
+	core_info_popup.size = Vector2(120, 48)
 	core_info_popup.visible = true
 	return
 	core_info_label.text = "中央核心\n生命：%d / %d\n\n敌人抵达后会攻击核心并消失。核心生命降到 0 时本局失败。" % [
@@ -1025,7 +1041,7 @@ func _create_settings_panel() -> void:
 
 func _create_tactical_panel() -> void:
 	tactical_panel = Control.new()
-	tactical_panel.position = Vector2(-24, 205)
+	tactical_panel.position = Vector2(-36, 205)
 	tactical_panel.size = Vector2(380, 570)
 	tactical_panel.z_index = 80
 	add_child(tactical_panel)
@@ -1036,7 +1052,7 @@ func _create_tactical_panel() -> void:
 	board.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	board.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tactical_panel.add_child(board)
-	status_row.position = Vector2(4, 125)
+	status_row.position = Vector2(-8, 125)
 	status_row.size = Vector2(304, 58)
 	status_row.z_index = 82
 	var title_paper := PanelContainer.new()
