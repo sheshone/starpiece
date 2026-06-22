@@ -16,6 +16,7 @@ signal terrain_hovered(grid_pos: Vector2i)
 signal enemy_hovered(grid_pos: Vector2i)
 signal enemy_selected(grid_pos: Vector2i)
 signal core_hovered
+signal core_selected
 signal map_hover_exited
 signal selection_cleared
 signal cell_destroyed(grid_pos: Vector2i)
@@ -1689,6 +1690,11 @@ func _toggle_fullscreen() -> void:
 func _handle_click(pos: Vector2i) -> void:
 	if not is_in_bounds(pos):
 		return
+	if pos == core_pos:
+		selected_pos = pos
+		core_selected.emit()
+		queue_redraw()
+		return
 	if get_cell(pos).enemy:
 		selected_pos = pos
 		range_reveal_started_at = pulse_time
@@ -1930,25 +1936,46 @@ func _draw_selected_attack_range() -> void:
 			else 1.0
 		)
 	)
-	var reveal := clampf((pulse_time - range_reveal_started_at) / 0.28, 0.0, 1.0)
-	reveal = ease(reveal, 0.35)
+	var reveal := clampf((pulse_time - range_reveal_started_at) / 0.52, 0.0, 1.0)
+	reveal = smoothstep(0.0, 1.0, reveal)
+	var center := grid_to_world(selected_pos) + Vector2.ONE * CELL_SIZE * 0.5
+	var visual_radius := (attack_range + 0.45) * CELL_SIZE * reveal
+	var range_color := (
+		Color(1.0, 0.72, 0.18, 0.13)
+		if deity and deity.deity_type == GameDefinitions.DeityType.ATTACK
+		else (
+			Color(0.25, 0.92, 0.72, 0.13)
+			if deity
+			else Color(0.95, 0.18, 0.24, 0.14)
+		)
+	)
+	if visual_radius > 1.0:
+		var diamond := PackedVector2Array([
+			center + Vector2(0, -visual_radius),
+			center + Vector2(visual_radius, 0),
+			center + Vector2(0, visual_radius),
+			center + Vector2(-visual_radius, 0),
+		])
+		draw_colored_polygon(diamond, Color(range_color, range_color.a * 0.55))
+		draw_polyline(
+			PackedVector2Array([diamond[0], diamond[1], diamond[2], diamond[3], diamond[0]]),
+			Color(range_color, 0.62),
+			2.0,
+			true
+		)
 	for y in range(GRID_H):
 		for x in range(GRID_W):
 			var pos := Vector2i(x, y)
-			if float(_manhattan(selected_pos, pos)) > attack_range * reveal:
+			var distance := float(_manhattan(selected_pos, pos))
+			if distance > attack_range:
+				continue
+			var cell_reveal := clampf(attack_range * reveal - distance + 0.72, 0.0, 1.0)
+			if cell_reveal <= 0.0:
 				continue
 			var rect := Rect2(grid_to_world(pos) + Vector2(3, 3), Vector2(CELL_SIZE - 6, CELL_SIZE - 6))
-			var color := (
-				Color(1.0, 0.72, 0.18, 0.13)
-				if deity and deity.deity_type == GameDefinitions.DeityType.ATTACK
-				else (
-					Color(0.25, 0.92, 0.72, 0.13)
-					if deity
-					else Color(0.95, 0.18, 0.24, 0.14)
-				)
-			)
+			var color := Color(range_color, range_color.a * cell_reveal)
 			draw_rect(rect, color)
-			draw_rect(rect, Color(color, 0.55), false, 1.4)
+			draw_rect(rect, Color(color, 0.55 * cell_reveal), false, 1.4)
 
 
 func _draw_preview_routes() -> void:

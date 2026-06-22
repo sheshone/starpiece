@@ -78,6 +78,10 @@ func _ready() -> void:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
+	if event.pressed and event.keycode == KEY_ESCAPE and settings_panel and settings_panel.visible:
+		_toggle_settings()
+		get_viewport().set_input_as_handled()
+		return
 	if event.pressed and event.keycode == KEY_F3:
 		debug_panel.visible = not debug_panel.visible
 		_refresh_debug_panel()
@@ -106,9 +110,10 @@ func _build_edge_hud() -> void:
 	status_row.move_child(core_status, status_row.get_child_count() - 1)
 
 	start_button = _make_button("时间流动", self, _start_combat)
-	start_button.position = Vector2(1506, 438)
-	start_button.size = Vector2(124, 124)
-	start_button.custom_minimum_size = Vector2(124, 124)
+	start_button.position = Vector2(1478, 410)
+	start_button.size = Vector2(180, 180)
+	start_button.custom_minimum_size = Vector2(180, 180)
+	start_button.set_meta("persistent_icon_outline", true)
 	start_button.tooltip_text = "时间流动：进入自动战斗阶段"
 	AssetCatalog.apply_button_visual(start_button, "icon_time_flow", true)
 	start_button.pivot_offset = start_button.size * 0.5
@@ -186,6 +191,7 @@ func _connect_map() -> void:
 		map.enemy_hovered.connect(_show_enemy_info)
 		map.enemy_selected.connect(_show_selected_enemy_info)
 		map.core_hovered.connect(_show_core_info)
+		map.core_selected.connect(_show_selected_core_info)
 		map.map_hover_exited.connect(_hide_terrain_popup)
 		map.selection_cleared.connect(_clear_selection_popup)
 
@@ -387,7 +393,6 @@ func _create_core_info_popup() -> void:
 
 func _show_shop_card_info(card: CardBase, global_rect: Rect2) -> void:
 	card_hover_popup.visible = false
-	return
 	card_hover_title.text = card.card_name
 	card_hover_body.text = ""
 	card_hover_body.visible = false
@@ -434,15 +439,14 @@ func _show_deity(pos: Vector2i) -> void:
 		return
 	popup_position = pos
 	popup_title.text = map.deity_form_name(pos, (map.get_cell(pos).deity as DeityInstance).deity_type)
-	attack_preview.text = map.deity_function_description(pos)
-	_rebuild_deity_stat_icons(pos)
-	deity_stat_row.visible = true
+	attack_preview.text = ""
+	deity_stat_row.visible = false
 	# Keep the panel concise: only function and final attributes are shown.
 	resource_preview.text = ""
 	attack_choice_button.visible = false
 	resource_choice_button.visible = false
 	deity_button_row.visible = false
-	attack_preview.visible = true
+	attack_preview.visible = false
 	resource_preview.visible = false
 	deity_separator.visible = false
 	upgrade_preview.visible = false
@@ -451,11 +455,10 @@ func _show_deity(pos: Vector2i) -> void:
 	migrate_button.visible = false
 	popup_interactive = false
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	deity_popup.custom_minimum_size = Vector2(350, 300)
+	deity_popup.custom_minimum_size = Vector2(220, 64)
 	deity_popup.reset_size()
 	_position_popup(pos)
 	_reveal_deity_popup()
-	_update_tactical_deity(pos)
 	return
 	attack_preview.text = (
 		"神域规模：%d 格\n仅计算上下左右连通的同类地形；同一神域最多一座神祇。\n\n%s"
@@ -486,6 +489,11 @@ func _show_selected_deity(pos: Vector2i) -> void:
 	var deity := map.get_cell(pos).deity as DeityInstance if map else null
 	if not map or not deity:
 		return
+	attack_preview.text = map.deity_function_description(pos)
+	attack_preview.visible = true
+	_rebuild_deity_stat_icons(pos)
+	deity_stat_row.visible = true
+	_update_tactical_deity(pos)
 	popup_interactive = true
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_STOP
 	var current := map.deity_stats(pos)
@@ -590,9 +598,9 @@ func _show_enemy_info(pos: Vector2i) -> void:
 		return
 	popup_position = pos
 	popup_title.text = "侵蚀体"
-	attack_preview.text = description
+	attack_preview.text = ""
 	resource_preview.text = ""
-	attack_preview.visible = true
+	attack_preview.visible = false
 	resource_preview.visible = false
 	deity_separator.visible = false
 	attack_choice_button.visible = false
@@ -600,10 +608,11 @@ func _show_enemy_info(pos: Vector2i) -> void:
 	deity_button_row.visible = false
 	popup_interactive = false
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	deity_popup.custom_minimum_size = Vector2(330, 190)
-	deity_popup.size = Vector2(330, 190)
+	deity_popup.custom_minimum_size = Vector2(190, 64)
+	deity_popup.size = Vector2(190, 64)
 	deity_popup.visible = true
 	_position_popup(pos)
+	return
 	if tactical_label:
 		tactical_label.text = "侵蚀体\n%s" % description
 
@@ -613,6 +622,9 @@ func _show_selected_enemy_info(pos: Vector2i) -> void:
 	_show_enemy_info(pos)
 	popup_interactive = true
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	var map := _get_map()
+	if map and tactical_label:
+		tactical_label.text = "侵蚀体\n\n%s" % map.enemy_description(pos)
 
 
 func _show_core_info() -> void:
@@ -623,6 +635,19 @@ func _show_core_info() -> void:
 	if not compact_map:
 		core_info_popup.visible = false
 		return
+	core_info_label.text = "中央核心"
+	var hover_anchor := compact_map.to_global(
+		compact_map.grid_to_world(compact_map.core_pos)
+		+ Vector2(compact_map.CELL_SIZE + 18, 12)
+	)
+	var hover_viewport := get_viewport_rect().size
+	core_info_popup.position = Vector2(
+		clampf(hover_anchor.x, 8.0, hover_viewport.x - 198.0),
+		clampf(hover_anchor.y, 8.0, hover_viewport.y - 72.0)
+	)
+	core_info_popup.size = Vector2(190, 64)
+	core_info_popup.visible = true
+	return
 	core_info_label.text = "中央核心\n生命：%d / %d\n\n敌人抵达后会攻击核心并消失。核心生命降到 0 时本局失败。" % [
 		GameManager.core_hp,
 		GameManager.core_max_hp,
@@ -673,6 +698,17 @@ func _show_core_info() -> void:
 	call_deferred("_finish_show_core_info", map.core_pos)
 
 
+func _show_selected_core_info() -> void:
+	popup_interactive = false
+	_show_core_info()
+	popup_interactive = true
+	if tactical_label:
+		tactical_label.text = (
+			"中央核心\n\n生命 %d / %d\n神力 %.1f\n\n敌人抵达后会攻击核心；生命降到 0 时本局失败。"
+			% [GameManager.core_hp, GameManager.core_max_hp, ResourceManager.divine_power]
+		)
+
+
 func _finish_show_core_info(core_position: Vector2i) -> void:
 	if popup_interactive or attack_preview.text.is_empty():
 		return
@@ -695,17 +731,17 @@ func _show_terrain_info(pos: Vector2i) -> void:
 	deity_stat_row.visible = false
 	popup_position = pos
 	popup_title.text = "%s地块" % GameDefinitions.TERRAIN_NAMES[map.get_cell(pos).terrain]
-	attack_preview.text = map.terrain_deity_preview(pos, GameDefinitions.DeityType.ATTACK)
-	resource_preview.text = map.terrain_deity_preview(pos, GameDefinitions.DeityType.RESOURCE)
-	attack_preview.visible = true
-	resource_preview.visible = true
-	deity_separator.visible = true
+	attack_preview.text = ""
+	resource_preview.text = ""
+	attack_preview.visible = false
+	resource_preview.visible = false
+	deity_separator.visible = false
 	attack_choice_button.visible = false
 	resource_choice_button.visible = false
 	deity_button_row.visible = false
 	popup_interactive = false
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	deity_popup.custom_minimum_size = Vector2(300, 150)
+	deity_popup.custom_minimum_size = Vector2(190, 64)
 	deity_popup.reset_size()
 	_position_popup(pos)
 	deity_popup.visible = true
@@ -959,8 +995,9 @@ func _create_tactical_panel() -> void:
 	status_row.size = Vector2(304, 58)
 	status_row.z_index = 82
 	var margin := MarginContainer.new()
-	margin.position = Vector2(60, 175)
-	margin.size = Vector2(260, 302)
+	# board.png 的文字安全区：横向约 1/7～6/7，纵向约 1/5～4/5。
+	margin.position = Vector2(54, 114)
+	margin.size = Vector2(272, 342)
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tactical_panel.add_child(margin)
 	tactical_label = Label.new()
@@ -982,6 +1019,33 @@ func _update_tactical_deity(pos: Vector2i) -> void:
 	var deity := map.get_cell(pos).deity as DeityInstance
 	if not deity:
 		return
+	var detail_context := map.deity_domain_context(pos)
+	var detail_area := int(detail_context.get("area", 1))
+	var detail_neighbors: Array = detail_context.get("adjacent_deities", [])
+	var detail_area_text := "不大" if detail_area <= 2 else ("比较大" if detail_area <= 6 else "很大")
+	var detail_friend_text := (
+		"没有"
+		if detail_neighbors.is_empty()
+		else ("一个" if detail_neighbors.size() == 1 else ("一些" if detail_neighbors.size() <= 3 else "许多"))
+	)
+	var detail_stats := map.deity_stats(pos)
+	var detail_stat_text := (
+		"伤害 %d　射程 %.1f　间隔 %.2f 秒"
+		% [int(detail_stats.damage), float(detail_stats.range), float(detail_stats.interval)]
+		if deity.deity_type == GameDefinitions.DeityType.ATTACK
+		else "产量 %.2f　间隔 %.2f 秒" % [float(detail_stats.amount), float(detail_stats.interval)]
+	)
+	tactical_label.text = "%s\n\n等级 %d　生命 %d/%d\n%s\n神域%s，与%s朋友相邻\n\n%s" % [
+		map.deity_form_name(pos, deity.deity_type),
+		deity.level,
+		deity.hp,
+		deity.max_hp,
+		detail_stat_text,
+		detail_area_text,
+		detail_friend_text,
+		map.deity_function_description(pos),
+	]
+	return
 	var context := map.deity_domain_context(pos)
 	var area := int(context.get("area", 1))
 	var neighbor_positions: Array = context.get("adjacent_deities", [])

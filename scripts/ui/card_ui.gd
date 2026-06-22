@@ -88,16 +88,6 @@ func _draw() -> void:
 	var power_icon := AssetCatalog.texture("icon_divine_power")
 	if power_icon:
 		_draw_power_cost(power_icon, card_data.divine_power_cost)
-	if hovered:
-		draw_string(
-			ThemeDB.fallback_font,
-			Vector2(8, 14),
-			card_data.card_name,
-			HORIZONTAL_ALIGNMENT_CENTER,
-			134,
-			13,
-			Color(0.08, 0.055, 0.035, 0.96)
-		)
 
 
 func _draw_power_cost(power_icon: Texture2D, cost: float) -> void:

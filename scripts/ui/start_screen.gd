@@ -32,6 +32,22 @@ func _ready() -> void:
 	_create_home_overlay()
 
 
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event.pressed or event.keycode != KEY_ESCAPE:
+		return
+	if help_panel and help_panel.visible:
+		help_panel.visible = false
+		help_modal_blocker.visible = false
+		help_close_button.visible = false
+		get_viewport().set_input_as_handled()
+	elif home_overlay and home_overlay.visible:
+		home_overlay.visible = false
+		home_modal_blocker.visible = false
+		if is_instance_valid(home_close_button):
+			home_close_button.queue_free()
+		get_viewport().set_input_as_handled()
+
+
 func _build_background() -> void:
 	var backdrop := TextureRect.new()
 	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -451,10 +467,10 @@ func _build_codex_page(parent: VBoxContainer) -> void:
 	var glossary_title := Label.new()
 	glossary_title.text = "名词与机制"
 	glossary_title.position = Vector2(132, 52)
-	glossary_title.size = Vector2(396, 32)
-	glossary_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	glossary_title.size = Vector2(151, 32)
+	glossary_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	glossary_title.add_theme_font_size_override("font_size", 22)
-	glossary_title.add_theme_color_override("font_color", Color("f3dfb7"))
+	glossary_title.add_theme_color_override("font_color", Color("51321d"))
 	glossary_page.add_child(glossary_title)
 	var left_glossary := Label.new()
 	left_glossary.position = Vector2(132, 88)

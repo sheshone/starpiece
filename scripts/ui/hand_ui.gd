@@ -32,9 +32,9 @@ func _show_shop(slots: Array) -> void:
 	var scene: PackedScene = load("res://scenes/ui/card_display.tscn")
 	var card_positions := [
 		Vector2(1500, 70),
-		Vector2(1300, 235),
-		Vector2(1235, 430),
-		Vector2(1300, 625),
+		Vector2(1370, 235),
+		Vector2(1310, 430),
+		Vector2(1370, 625),
 		Vector2(1500, 790),
 	]
 	for i in range(CardManager.SHOP_SIZE):
@@ -77,7 +77,7 @@ func _show_shop(slots: Array) -> void:
 			empty.add_child(empty_art)
 			add_child(empty)
 			shop_nodes.append(empty)
-	_build_shop_controls(Vector2(1490, 244), Vector2(1490, 632))
+	_build_shop_controls(Vector2(1506, 282), Vector2(1506, 650))
 
 
 func _purchase(index: int) -> void:
@@ -97,8 +97,8 @@ func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) 
 	refresh.text = "免费刷新 ×%d" % free_count
 	refresh.tooltip_text = refresh.text
 	refresh.position = refresh_position
-	refresh.size = Vector2(184, 184)
-	refresh.custom_minimum_size = Vector2(184, 184)
+	refresh.size = Vector2(104, 104)
+	refresh.custom_minimum_size = Vector2(104, 104)
 	refresh.mouse_filter = Control.MOUSE_FILTER_STOP
 	refresh.set_meta("persistent_icon_outline", true)
 	refresh.disabled = free_count <= 0 or TurnManager.current_phase != TurnManager.Phase.BUILD
@@ -112,8 +112,8 @@ func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) 
 	migrate.text = "布置神祇"
 	migrate.tooltip_text = "布置／迁移神祇"
 	migrate.position = migrate_position
-	migrate.size = Vector2(184, 184)
-	migrate.custom_minimum_size = Vector2(184, 184)
+	migrate.size = Vector2(104, 104)
+	migrate.custom_minimum_size = Vector2(104, 104)
 	migrate.mouse_filter = Control.MOUSE_FILTER_STOP
 	migrate.set_meta("persistent_icon_outline", true)
 	migrate.disabled = TurnManager.current_phase != TurnManager.Phase.BUILD
