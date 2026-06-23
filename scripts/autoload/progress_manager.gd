@@ -21,8 +21,9 @@ var lifetime_stats: Dictionary = {}
 var current_planet_faces: Dictionary = {}
 var planet_history: Array = []
 var run_checkpoint: Dictionary = {}
+var tutorial_seen: Dictionary = {}
 
-const MAX_MAPS := 6
+const MAX_MAPS := 7
 
 
 func _ready() -> void:
@@ -111,6 +112,7 @@ func calculate_score(map_index: int, snapshot: Dictionary) -> int:
 	score -= int(float(snapshot.get("time", 0.0)) * float(weights.time_penalty_per_second))
 	if int(snapshot.get("anchors", 0)) > 0:
 		score += int(snapshot.get("anchors", 0)) * int(weights.anchor)
+	score += int(float(snapshot.get("fill_ratio", 0.0)) * float(weights.get("fill_ratio", 0)))
 	score += int(float(snapshot.get("resource", 0.0)) * float(weights.resource))
 	return maxi(0, score)
 
@@ -172,6 +174,22 @@ func clear_run_checkpoint() -> void:
 	_save()
 
 
+func has_seen_tutorial(id: String) -> bool:
+	return bool(tutorial_seen.get(id, false))
+
+
+func mark_tutorial_seen(id: String) -> void:
+	if id.is_empty() or bool(tutorial_seen.get(id, false)):
+		return
+	tutorial_seen[id] = true
+	_save()
+
+
+func reset_tutorial_seen() -> void:
+	tutorial_seen.clear()
+	_save()
+
+
 func unlock(id: String) -> void:
 	if bool(achievements.get(id, false)):
 		return
@@ -224,6 +242,7 @@ func _save() -> void:
 			"current_planet_faces": current_planet_faces,
 			"planet_history": planet_history,
 			"run_checkpoint": run_checkpoint,
+			"tutorial_seen": tutorial_seen,
 		}))
 
 
@@ -243,3 +262,4 @@ func _load_save() -> void:
 		current_planet_faces = (parsed as Dictionary).get("current_planet_faces", {})
 		planet_history = (parsed as Dictionary).get("planet_history", [])
 		run_checkpoint = (parsed as Dictionary).get("run_checkpoint", {})
+		tutorial_seen = (parsed as Dictionary).get("tutorial_seen", {})

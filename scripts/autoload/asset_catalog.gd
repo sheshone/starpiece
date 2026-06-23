@@ -120,6 +120,7 @@ const TEXTURE_PATHS := {
 	"button_settings": "res://assets/art/ui/button_settings.png",
 	"button_back": "res://assets/art/ui/button_back.png",
 	"button_main_menu": "res://assets/art/ui/button_main_menu.png",
+	"button_quit": "res://assets/art/ui/quit.png",
 	"button_continue": "res://assets/art/ui/button_continue.png",
 	"button_blessing_1": "res://assets/art/ui/button_blessing_1.png",
 	"button_blessing_2": "res://assets/art/ui/button_blessing_2.png",

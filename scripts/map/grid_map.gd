@@ -1,4 +1,4 @@
-class_name GameMap
+﻿class_name GameMap
 extends Node2D
 
 signal placement_finished(success: bool)
@@ -22,6 +22,8 @@ signal selection_cleared
 signal cell_destroyed(grid_pos: Vector2i)
 signal map_completed
 signal enemy_core_destroyed(grid_pos: Vector2i)
+signal enemy_spawned(grid_pos: Vector2i)
+signal tutorial_event(event_name: String, payload: Dictionary)
 
 const CELL_SIZE := 54
 const GRID_W := 11
@@ -38,6 +40,7 @@ var preview_pos := Vector2i(-1, -1)
 var preview_rotation: int = 0
 var hover_pos := Vector2i(-1, -1)
 var selected_pos := Vector2i(-1, -1)
+var last_placed_positions: Array[Vector2i] = []
 var migration_source := Vector2i(-1, -1)
 var migration_selecting_source: bool = false
 var range_reveal_started_at: float = 0.0
@@ -91,11 +94,14 @@ func reset_board() -> void:
 		cell.visual_rotation = GameManager.rng.randi_range(0, 3)
 		cells.append(cell)
 	selected_pos = Vector2i(-1, -1)
+	last_placed_positions.clear()
 	completion_emitted = false
 	pending_spawn_core = Vector2i(-1, -1)
 	spawn_warning_time = 0.0
 	spawn_warning_sequence = 0
 	_setup_enemy_cores()
+	if ProgressManager.current_map == 0:
+		_setup_prologue_layout()
 	if required_anchor_count() > 0:
 		_setup_anchors()
 	clear_preview()
@@ -131,6 +137,23 @@ func _setup_enemy_cores() -> void:
 			"active": enemy_core_activation_order.find(index) < initial_active,
 			"index": index,
 		}
+
+
+func _setup_prologue_layout() -> void:
+	# The top enemy core is sealed on three sides. The player only needs to place
+	# the missing cell at (5, 1), then build a plain attack deity nearby.
+	for pos in [
+		Vector2i(4, 0),
+		Vector2i(6, 0),
+		Vector2i(5, 2),
+		Vector2i(5, 3),
+		Vector2i(5, 4),
+	]:
+		var cell := get_cell(pos)
+		cell.terrain = GameDefinitions.TerrainType.PLAIN
+		cell.piece_id = 0
+		cell.pollution = 0
+		cell.visual_rotation = 0
 
 
 func is_enemy_core(pos: Vector2i) -> bool:
@@ -332,13 +355,15 @@ func begin_terrain_placement(card: TerrainCard) -> void:
 	selected_pos = Vector2i(-1, -1)
 	selection_cleared.emit()
 	preview_terrain = card
-	preview_pos = core_pos + Vector2i.RIGHT
+	preview_pos = Vector2i(5, 1) if ProgressManager.current_map == 0 else core_pos + Vector2i.RIGHT
 	preview_route_cache_key = ""
 	queue_redraw()
 
 
 func can_place_terrain(card: TerrainCard, anchor: Vector2i, rotation: int) -> bool:
 	if not card:
+		return false
+	if ProgressManager.current_map == 0 and anchor != Vector2i(5, 1):
 		return false
 	var positions: Array[Vector2i] = []
 	var touches_map := false
@@ -383,13 +408,15 @@ func place_preview_terrain() -> bool:
 		or not preview_terrain
 		or not can_place_terrain(preview_terrain, preview_pos, preview_rotation)
 	):
-		GameManager.reject_action("拼图必须在边界内、避开核心和已有拼图，并与地图四向相邻")
+		GameManager.reject_action("地块必须连接已有领地；山地不能封死敌方核心通往中央核心的路线")
 		return false
 	var piece := MapPieceInstance.new()
 	piece.piece_id = next_piece_id
 	piece.terrain_type = preview_terrain.terrain_type
+	last_placed_positions.clear()
 	for offset in preview_terrain.rotated_shape(preview_rotation):
 		var pos := preview_pos + offset
+		last_placed_positions.append(pos)
 		piece.cells.append(pos)
 		var cell := get_cell(pos)
 		if cell.was_collapsed:
@@ -400,7 +427,7 @@ func place_preview_terrain() -> bool:
 		cell.piece_id = piece.piece_id
 		cell.visual_rotation = 0
 		if cell.enemy:
-			# 新拼图不会抹掉敌人；敌人继续占据该格并可在死亡时污染它。
+			# 新拼图不会移除敌人；敌人继续占据该格，并可能在死亡时污染它。
 			pass
 		_activate_anchor_if_needed(pos)
 	pieces[piece.piece_id] = piece
@@ -457,7 +484,7 @@ func _activate_anchor_if_needed(pos: Vector2i) -> void:
 				var deity := get_cell(deity_pos).deity as DeityInstance
 				if deity:
 					deity.action_timer *= float(GameDefinitions.BALANCE.anchor_plain_speed_multiplier)
-			GameManager.post_message("平原锚点：所有神祇立即加速")
+			GameManager.post_message("平原锚点：所有神祇短暂加速")
 		GameDefinitions.TerrainType.MOUNTAIN:
 			GameManager.heal_core(int(GameDefinitions.BALANCE.anchor_mountain_core_heal))
 			GameManager.post_message("山地锚点：核心恢复生命")
@@ -505,6 +532,12 @@ func deity_form_name(pos: Vector2i, deity_type: int) -> String:
 func can_place_deity(deity_type: int, pos: Vector2i) -> bool:
 	if deity_type < 0 or not is_in_bounds(pos) or pos == core_pos:
 		return false
+	if ProgressManager.current_map == 0:
+		if deity_type != GameDefinitions.DeityType.ATTACK:
+			return false
+		var tutorial_core := _first_living_enemy_core()
+		if tutorial_core == Vector2i(-1, -1) or _manhattan(pos, tutorial_core) > 2:
+			return false
 	var cell := get_cell(pos)
 	return (
 		cell.piece_id >= 0
@@ -530,12 +563,16 @@ func resource_deity_refund(pos: Vector2i) -> float:
 
 
 func purchase_and_place_deity(pos: Vector2i, deity_type: int) -> bool:
+	if ProgressManager.current_map == 0 and deity_type != GameDefinitions.DeityType.ATTACK:
+		GameManager.reject_action("序章只能安置疾野神")
+		return false
 	if TurnManager.current_phase != TurnManager.Phase.BUILD or not can_place_deity(deity_type, pos):
 		GameManager.reject_action("该地块当前不能安置神祇")
 		return false
 	var cost := deity_purchase_cost(deity_type)
 	if not ResourceManager.spend(cost):
 		GameManager.reject_action("神力不足，需要 %.1f" % cost)
+		tutorial_event.emit("resource_insufficient", {"cost": cost})
 		return false
 	preview_deity_type = deity_type
 	var placed := place_deity(pos)
@@ -621,6 +658,7 @@ func migrate_deity(target: Vector2i) -> bool:
 	var cost := float(GameDefinitions.BALANCE.deity_migration_cost)
 	if not ResourceManager.spend(cost):
 		GameManager.reject_action("迁移需要 %.1f 神力" % cost)
+		tutorial_event.emit("resource_insufficient", {"cost": cost})
 		return false
 	var deity := get_cell(migration_source).deity as DeityInstance
 	get_cell(migration_source).deity = null
@@ -631,6 +669,7 @@ func migrate_deity(target: Vector2i) -> bool:
 	deity_selected.emit(target)
 	board_changed.emit()
 	GameManager.post_message("神祇已迁移，保留等级、生命与充能")
+	tutorial_event.emit("deity_migrated", {"pos": target})
 	queue_redraw()
 	return true
 
@@ -657,7 +696,7 @@ func surrounding_terrain_counts(pos: Vector2i) -> Dictionary:
 
 
 func domain_area_multiplier(_area: int) -> float:
-	# 最终规则保留该接口供旧UI读取，但神域面积不再提供普通属性倍率。
+	# 保留兼容接口；神域面积不再提供普通属性倍率。
 	return 1.0
 
 
@@ -803,13 +842,18 @@ func upgrade_deity(pos: Vector2i) -> bool:
 	if TurnManager.current_phase != TurnManager.Phase.BUILD:
 		return false
 	var deity := get_cell(pos).deity as DeityInstance
-	if not deity or deity.level >= 3 or not ResourceManager.spend(deity_upgrade_cost(deity.level)):
+	var cost := deity_upgrade_cost(deity.level) if deity else 0.0
+	if not deity or deity.level >= 3:
+		return false
+	if not ResourceManager.spend(cost):
+		tutorial_event.emit("resource_insufficient", {"cost": cost})
 		return false
 	deity.level += 1
 	_recalculate_deity(pos)
 	deity.hp = deity.max_hp
 	ProgressManager.add_stat("deities_upgraded")
 	board_changed.emit()
+	tutorial_event.emit("deity_upgraded", {"pos": pos, "level": deity.level})
 	queue_redraw()
 	return true
 
@@ -827,6 +871,7 @@ func remove_deity(pos: Vector2i) -> bool:
 	var cost := deity_removal_cost()
 	if not ResourceManager.spend(cost):
 		GameManager.reject_action("移除需要 %.1f 神力" % cost)
+		tutorial_event.emit("resource_insufficient", {"cost": cost})
 		return false
 	get_cell(pos).deity = null
 	selected_pos = Vector2i(-1, -1)
@@ -834,6 +879,7 @@ func remove_deity(pos: Vector2i) -> bool:
 	board_changed.emit()
 	selection_cleared.emit()
 	GameManager.post_message("神祇已移除")
+	tutorial_event.emit("deity_removed", {"pos": pos})
 	queue_redraw()
 	return true
 
@@ -863,6 +909,10 @@ func recalculate_all_deities() -> void:
 
 func tick_combat(delta: float) -> void:
 	if TurnManager.current_phase != TurnManager.Phase.COMBAT or not GameManager.is_game_running:
+		return
+	if ProgressManager.current_map == 0:
+		_tick_deities(delta)
+		_tick_large_domain_skills(delta)
 		return
 	_update_enemy_core_activation()
 	if pending_spawn_core != Vector2i(-1, -1):
@@ -948,6 +998,11 @@ func _begin_spawn_warning() -> bool:
 
 
 func prepare_build_spawn_warning() -> void:
+	if ProgressManager.current_map == 0:
+		pending_spawn_core = Vector2i(-1, -1)
+		spawn_warning_time = 0.0
+		queue_redraw()
+		return
 	_update_enemy_core_activation()
 	if pending_spawn_core == Vector2i(-1, -1):
 		_begin_spawn_warning()
@@ -960,6 +1015,13 @@ func _enemy_core_direction_name(pos: Vector2i) -> String:
 	var horizontal := "左" if pos.x < core_pos.x else ("右" if pos.x > core_pos.x else "")
 	var vertical := "上" if pos.y < core_pos.y else ("下" if pos.y > core_pos.y else "")
 	return "%s%s" % [horizontal, vertical]
+
+
+func _first_living_enemy_core() -> Vector2i:
+	for pos in enemy_cores:
+		if int((enemy_cores[pos] as Dictionary).get("hp", 0)) > 0:
+			return pos
+	return Vector2i(-1, -1)
 
 
 func _spawn_cell_for_core(enemy_core_pos: Vector2i) -> Vector2i:
@@ -1034,6 +1096,7 @@ func _spawn_from_enemy_core(enemy_core_pos: Vector2i) -> bool:
 	_add_enemy_to_cell(pos, enemy)
 	_apply_entered_terrain(enemy_core_pos, pos, enemy)
 	ProgressManager.add_stat("enemy_spawned")
+	enemy_spawned.emit(pos)
 	board_changed.emit()
 	return true
 
@@ -1109,7 +1172,11 @@ func _attack_with_deity(pos: Vector2i, deity: DeityInstance, stats: Dictionary) 
 			else _nearest_enemy(pos, float(stats.range))
 		)
 	if target == Vector2i(-1, -1):
-		var core_target := _nearest_enemy_core(pos, float(stats.range))
+		var core_target := (
+			_nearest_enemy_core_from_region(pos, float(stats.range))
+			if terrain == GameDefinitions.TerrainType.PLAIN and deity.large_skill_time > 0.0
+			else _nearest_enemy_core(pos, float(stats.range))
+		)
 		if core_target != Vector2i(-1, -1):
 			_play_deity_action_animation(deity, "attack", 0.5)
 			_attack_enemy_core(pos, core_target, int(stats.damage))
@@ -1258,6 +1325,29 @@ func _nearest_enemy_core(origin: Vector2i, max_range: float) -> Vector2i:
 	return best
 
 
+func _nearest_enemy_core_from_region(origin: Vector2i, max_range: float) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_distance := INF
+	var region := terrain_region(origin)
+	for core_position in enemy_cores:
+		var data: Dictionary = enemy_cores[core_position]
+		if (
+			int(data.hp) <= 0
+			or not bool(data.active)
+			or not _enemy_core_is_surrounded_by_terrain(core_position)
+		):
+			continue
+		for region_position in region:
+			var distance := float(_manhattan(region_position, core_position))
+			if (
+				distance <= max_range + float(GameDefinitions.BALANCE.attack_range_tolerance)
+				and distance < best_distance
+			):
+				best = core_position
+				best_distance = distance
+	return best
+
+
 func _enemy_core_is_surrounded_by_terrain(pos: Vector2i) -> bool:
 	var checked := 0
 	for adjacent in neighbors(pos):
@@ -1290,6 +1380,7 @@ func _attack_enemy_core(source: Vector2i, target: Vector2i, damage: int) -> void
 	AudioManager.play_sfx_first(["attack_deity_%s" % AssetCatalog.terrain_suffix(terrain), "attack"], -3.0)
 	attack_visual_requested.emit(source, target, Color("ffb64d"), damage, profile)
 	data.hp = maxi(0, int(data.hp) - damage)
+	tutorial_event.emit("enemy_core_damaged", {"pos": target, "source": source})
 	if int(data.hp) <= 0:
 		data.active = false
 		ResourceManager.add_divine_power(float(GameDefinitions.BALANCE.enemy_core_reward))
@@ -1328,6 +1419,7 @@ func _produce_with_deity(pos: Vector2i, deity: DeityInstance, stats: Dictionary)
 			ResourceManager.add_divine_power(produced)
 			ProgressManager.add_stat("resource_income_round", produced)
 			ProgressManager.add_stat("resource_income_total", produced)
+			tutorial_event.emit("resource_gained", {"pos": pos, "amount": produced})
 			var context := deity_domain_context(pos)
 			var resonances: Dictionary = context.get("resonances", {})
 			if (
@@ -1564,6 +1656,12 @@ func _tick_enemies(delta: float) -> void:
 			1.0,
 			enemy.visual_progress + delta / maxf(0.05, enemy.visual_duration)
 		)
+		if enemy.pending_river_push:
+			enemy.pending_river_delay = maxf(0.0, enemy.pending_river_delay - delta)
+			if enemy.visual_progress >= 1.0 and enemy.pending_river_delay <= 0.0:
+				enemy.pending_river_push = false
+				_try_river_push(enemy.last_grid_pos, original, enemy)
+				continue
 		enemy.river_cooldown = maxf(0.0, enemy.river_cooldown - delta)
 		enemy.confusion_time = maxf(0.0, enemy.confusion_time - delta)
 		enemy.freeze_time = maxf(0.0, enemy.freeze_time - delta)
@@ -1711,6 +1809,7 @@ func _relocate_enemy(
 	enemy.visual_from = Vector2(origin)
 	enemy.visual_to = Vector2(target)
 	enemy.visual_progress = 0.0
+	enemy.visual_arc_height = 0.0
 	enemy.visual_duration = minf(
 		0.42,
 		maxf(0.16, float(GameDefinitions.BALANCE.enemy_move_interval) * 0.72)
@@ -1798,7 +1897,9 @@ func _apply_entered_terrain(origin: Vector2i, target: Vector2i, enemy: EnemyInst
 		enemy.confusion_time = 0.0
 		enemy.confusion_steps = 0
 	if terrain == GameDefinitions.TerrainType.RIVER and enemy.terrain_profile != "swimmer":
-		_try_river_push(origin, target, enemy)
+		tutorial_event.emit("enemy_entered_river", {"pos": target})
+		enemy.pending_river_push = true
+		enemy.pending_river_delay = 0.08
 	elif terrain == GameDefinitions.TerrainType.FOREST and enemy.terrain_profile != "forester":
 		var region_id := _region_id(target)
 		if region_id != enemy.forest_region_id:
@@ -1817,6 +1918,7 @@ func _apply_entered_terrain(origin: Vector2i, target: Vector2i, enemy: EnemyInst
 			)
 			enemy.confusion_steps = int(GameDefinitions.BALANCE.forest_confusion_max_steps)
 			enemy.confusion_previous = origin
+			tutorial_event.emit("enemy_entered_forest", {"pos": target})
 
 
 func _try_river_push(origin: Vector2i, river_pos: Vector2i, enemy: EnemyInstance) -> void:
@@ -1845,6 +1947,8 @@ func _try_river_push(origin: Vector2i, river_pos: Vector2i, enemy: EnemyInstance
 	if options.is_empty():
 		var fallback_side := side_a if GameManager.rng.randi_range(0, 1) == 0 else side_b
 		_forced_move_with_bounce(river_pos, fallback_side, enemy, "river")
+		enemy.visual_arc_height = 0.72
+		enemy.visual_duration = 0.34
 		enemy.river_region_id = -1
 		return
 	options.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
@@ -1858,6 +1962,8 @@ func _try_river_push(origin: Vector2i, river_pos: Vector2i, enemy: EnemyInstance
 	var chosen: Dictionary = closest[GameManager.rng.randi_range(0, closest.size() - 1)]
 	var destination := Vector2i(chosen.get("pos", river_pos))
 	_relocate_enemy(river_pos, destination, enemy, false, true)
+	enemy.visual_arc_height = 0.72 + float(best_distance - 1) * 0.12
+	enemy.visual_duration = 0.30 + float(best_distance - 1) * 0.06
 	enemy.river_region_id = -1
 
 
@@ -2074,27 +2180,27 @@ func enemy_description(pos: Vector2i) -> String:
 	var enemy := cell.enemy as EnemyInstance if cell else null
 	if not enemy:
 		return ""
-	var terrain_name: String = str(GameDefinitions.TERRAIN_NAMES.get(cell.terrain, "虚空"))
+	var terrain_name: String = str(GameDefinitions.TERRAIN_NAMES.get(cell.terrain, "铏氱┖"))
 	var states: Array[String] = []
 	if cell.terrain == GameDefinitions.TerrainType.PLAIN:
-		states.append("暴露")
+		states.append("鏆撮湶")
 	if enemy.slow_timer > 0.0:
-		states.append("减速×%d" % maxi(1, enemy.slow_stacks))
+		states.append("鍑忛€熋?d" % maxi(1, enemy.slow_stacks))
 	if enemy.freeze_time > 0.0:
-		states.append("冻结")
+		states.append("鍐荤粨")
 	if enemy.vulnerable_time > 0.0:
-		states.append("易伤")
+		states.append("鏄撲激")
 	if enemy.poison_time > 0.0:
-		states.append("中毒×%d" % enemy.poison_stacks)
+		states.append("涓瘨脳%d" % enemy.poison_stacks)
 	if enemy.confusion_time > 0.0:
-		states.append("森林混乱")
+		states.append("妫灄娣蜂贡")
 	if enemy.silence_time > 0.0:
-		states.append("沉默")
+		states.append("娌夐粯")
 	if enemy.charmed_time > 0.0:
-		states.append("策反")
+		states.append("绛栧弽")
 	var movement_state := "、".join(states) if not states.is_empty() else "正常向中央核心移动"
 	var stack_count := _enemies_at(pos).size()
-	return "生命：%d / %d\n攻击：%d\n同格敌人：%d\n所在位置：%s\n污染：%d / %d\n状态：%s\n\n接近核心或神祇后会发动攻击；死亡时污染当前有效地形格。" % [
+	return "生命：%d / %d\n攻击：%d\n同格敌人：%d\n所在地形：%s\n污染：%d / %d\n状态：%s\n\n接近核心或神祇后会发动攻击；死亡时污染当前有效地形格。" % [
 		enemy.hp,
 		enemy.max_hp,
 		enemy.attack,
@@ -2195,6 +2301,7 @@ func _pollute_at(pos: Vector2i) -> void:
 	_spawn_catalog_effect("pollution_growth", pos, 0.65)
 	var limit := pollution_limit()
 	GameManager.post_message("格子污染：%d/%d" % [cell.pollution, limit])
+	tutorial_event.emit("pollution_created", {"pos": pos, "pollution": cell.pollution, "limit": limit})
 	if cell.pollution >= limit:
 		_destroy_cell(pos)
 
@@ -2214,7 +2321,7 @@ func _destroy_cell(pos: Vector2i) -> void:
 	cell_destroyed.emit(pos)
 	AudioManager.play_sfx("cell_collapse", -1.0)
 	_spawn_catalog_effect("cell_collapse", pos, 0.9)
-	GameManager.post_message("污染失控，该格已崩解为虚空")
+	GameManager.post_message("污染失控，该格已崩解为混沌")
 	board_changed.emit()
 
 
@@ -2239,23 +2346,23 @@ func deity_ability_description(deity_type: int, terrain: int) -> String:
 	if deity_type == GameDefinitions.DeityType.ATTACK:
 		match terrain:
 			GameDefinitions.TerrainType.PLAIN:
-				return "速射：高速攻击危险目标；山地强化连射伤害，河流叠加攻速，森林强化新目标首击。"
+				return "速射：高速攻击危险目标；相邻神域会强化连射、攻速或首击。"
 			GameDefinitions.TerrainType.MOUNTAIN:
-				return "大炮：优先轰击远处或危险敌人；每邻接一种异类神域，爆炸范围扩大。"
+				return "炮击：优先轰击远处或危险敌人；相邻神域会扩大爆炸范围。"
 			GameDefinitions.TerrainType.RIVER:
-				return "弹射：攻击在敌人间跳跃；平原增加距离，山地增加分裂，森林增加跳跃次数。"
+				return "弹射：攻击在敌人之间跳跃；相邻神域会增加距离、分叉或次数。"
 			GameDefinitions.TerrainType.FOREST:
-				return "中毒：持续造成毒伤；平原允许叠毒，山地提高毒伤，河流使死亡目标传播毒素。"
+				return "中毒：持续造成毒伤；相邻神域会叠毒、增伤或传播毒素。"
 	else:
 		match terrain:
 			GameDefinitions.TerrainType.PLAIN:
-				return "治疗：优先治疗生命比例最低的神祇；山地附盾，河流扩散治疗，森林赋予减伤。"
+				return "治疗：优先治疗生命比例最低的神祇；相邻神域会提供护盾、扩散或减伤。"
 			GameDefinitions.TerrainType.MOUNTAIN:
-				return "凝滞：周期攻击并减速；平原可叠层冻结，河流强化减速，森林附加易伤。"
+				return "凝滞：周期攻击并减速；相邻神域会叠层冻结、强化减速或附加易伤。"
 			GameDefinitions.TerrainType.RIVER:
-				return "吸引：将附近敌人拉向自身；平原可策反，山地可抛离，森林可沉默。"
+				return "吸引：将附近敌人拉向自身；相邻神域会策反、抛离或沉默。"
 			GameDefinitions.TerrainType.FOREST:
-				return "丰饶：周期生产神力；平原提供阶段利息，山地使敌人绕行，河流可能获得免费刷新。"
+				return "丰饶：周期生产神力；相邻神域会提供利息、绕行或免费刷新。"
 	return ""
 
 
@@ -2315,55 +2422,7 @@ func deity_active_effects_description(pos: Vector2i) -> String:
 	]:
 		if not bool(resonances.get(terrain, false)):
 			continue
-		var effect := ""
-		if deity.deity_type == GameDefinitions.DeityType.ATTACK:
-			match cell.terrain:
-				GameDefinitions.TerrainType.PLAIN:
-					effect = {
-						GameDefinitions.TerrainType.MOUNTAIN: "连射逐渐增伤",
-						GameDefinitions.TerrainType.RIVER: "连射逐渐加速",
-						GameDefinitions.TerrainType.FOREST: "新目标首击强化",
-					}.get(terrain, "")
-				GameDefinitions.TerrainType.MOUNTAIN:
-					effect = "爆炸范围扩大"
-				GameDefinitions.TerrainType.RIVER:
-					effect = {
-						GameDefinitions.TerrainType.PLAIN: "弹射距离增加",
-						GameDefinitions.TerrainType.MOUNTAIN: "弹射可以分裂",
-						GameDefinitions.TerrainType.FOREST: "弹射次数增加",
-					}.get(terrain, "")
-				GameDefinitions.TerrainType.FOREST:
-					effect = {
-						GameDefinitions.TerrainType.PLAIN: "中毒可以叠层",
-						GameDefinitions.TerrainType.MOUNTAIN: "每层毒伤提高",
-						GameDefinitions.TerrainType.RIVER: "死亡传播毒素",
-					}.get(terrain, "")
-		else:
-			match cell.terrain:
-				GameDefinitions.TerrainType.PLAIN:
-					effect = {
-						GameDefinitions.TerrainType.MOUNTAIN: "治疗附加护盾",
-						GameDefinitions.TerrainType.RIVER: "治疗向附近扩散",
-						GameDefinitions.TerrainType.FOREST: "治疗附加减伤",
-					}.get(terrain, "")
-				GameDefinitions.TerrainType.MOUNTAIN:
-					effect = {
-						GameDefinitions.TerrainType.PLAIN: "减速叠层后冻结",
-						GameDefinitions.TerrainType.RIVER: "单层减速增强",
-						GameDefinitions.TerrainType.FOREST: "减速附加易伤",
-					}.get(terrain, "")
-				GameDefinitions.TerrainType.RIVER:
-					effect = {
-						GameDefinitions.TerrainType.PLAIN: "吸引时可能策反",
-						GameDefinitions.TerrainType.MOUNTAIN: "吸引后可能抛离",
-						GameDefinitions.TerrainType.FOREST: "吸引时可能沉默",
-					}.get(terrain, "")
-				GameDefinitions.TerrainType.FOREST:
-					effect = {
-						GameDefinitions.TerrainType.PLAIN: "战斗结束获得利息",
-						GameDefinitions.TerrainType.MOUNTAIN: "敌人尽量绕行",
-						GameDefinitions.TerrainType.RIVER: "生产可能获得免费刷新",
-					}.get(terrain, "")
+		var effect := _adjacent_effect_summary(deity.deity_type, cell.terrain, terrain)
 		if not effect.is_empty():
 			lines.append("与%s相邻：%s" % [GameDefinitions.TERRAIN_NAMES[terrain], effect])
 	return "\n".join(lines) if not lines.is_empty() else "当前没有异类神域相邻"
@@ -2372,14 +2431,81 @@ func deity_active_effects_description(pos: Vector2i) -> String:
 func large_domain_skill_description(pos: Vector2i) -> String:
 	match get_cell(pos).terrain:
 		GameDefinitions.TerrainType.PLAIN:
-			return "一望无垠：整片平原暂时成为攻击或治疗的施法起点。"
+			return "一望无垠：整片平原暂时成为攻击或治疗的起点。"
 		GameDefinitions.TerrainType.MOUNTAIN:
 			return "地壳隆起：周围合法地形暂时变为山地并改变敌人路线。"
 		GameDefinitions.TerrainType.RIVER:
 			return "洪流：河流向外扩展，淹没普通敌人并重伤强敌。"
 		GameDefinitions.TerrainType.FOREST:
-			return "迷林徘徊：森林内敌人每步随机改向，撞上硬障碍后反弹，效果结束后恢复寻路。"
+			return "迷林徘徊：森林内敌人随机改向，效果结束后恢复寻路。"
 	return ""
+
+
+func _adjacent_effect_summary(deity_type: int, own_terrain: int, adjacent_terrain: int) -> String:
+	if deity_type == GameDefinitions.DeityType.ATTACK:
+		match own_terrain:
+			GameDefinitions.TerrainType.PLAIN:
+				match adjacent_terrain:
+					GameDefinitions.TerrainType.MOUNTAIN: return "连续攻击同一目标时逐步增伤"
+					GameDefinitions.TerrainType.RIVER: return "连续攻击同一目标时逐步加速"
+					GameDefinitions.TerrainType.FOREST: return "切换到新目标时首击强化"
+			GameDefinitions.TerrainType.MOUNTAIN:
+				return "炮击爆炸范围扩大"
+			GameDefinitions.TerrainType.RIVER:
+				match adjacent_terrain:
+					GameDefinitions.TerrainType.PLAIN: return "弹射搜索距离增加"
+					GameDefinitions.TerrainType.MOUNTAIN: return "一次命中可分裂到更多敌人"
+					GameDefinitions.TerrainType.FOREST: return "总弹射次数增加"
+			GameDefinitions.TerrainType.FOREST:
+				match adjacent_terrain:
+					GameDefinitions.TerrainType.PLAIN: return "毒素可以叠加"
+					GameDefinitions.TerrainType.MOUNTAIN: return "每层毒素伤害提高"
+					GameDefinitions.TerrainType.RIVER: return "中毒敌人死亡时传播毒素"
+	else:
+		match own_terrain:
+			GameDefinitions.TerrainType.PLAIN:
+				match adjacent_terrain:
+					GameDefinitions.TerrainType.MOUNTAIN: return "治疗附加护盾"
+					GameDefinitions.TerrainType.RIVER: return "治疗向附近友军扩散"
+					GameDefinitions.TerrainType.FOREST: return "治疗附加短暂减伤"
+			GameDefinitions.TerrainType.MOUNTAIN:
+				match adjacent_terrain:
+					GameDefinitions.TerrainType.PLAIN: return "减速叠层后可冻结"
+					GameDefinitions.TerrainType.RIVER: return "单层减速效果增强"
+					GameDefinitions.TerrainType.FOREST: return "减速同时附加易伤"
+			GameDefinitions.TerrainType.RIVER:
+				match adjacent_terrain:
+					GameDefinitions.TerrainType.PLAIN: return "可能短暂策反普通敌人"
+					GameDefinitions.TerrainType.MOUNTAIN: return "可能将敌人向外抛离"
+					GameDefinitions.TerrainType.FOREST: return "可能使敌人沉默"
+			GameDefinitions.TerrainType.FOREST:
+				match adjacent_terrain:
+					GameDefinitions.TerrainType.PLAIN: return "战斗结束结算有限利息"
+					GameDefinitions.TerrainType.MOUNTAIN: return "敌人有其他路线时会尽量绕开"
+					GameDefinitions.TerrainType.RIVER: return "生产时可能获得免费刷新"
+	return ""
+
+
+func prepare_tutorial_enemy_core_target() -> Vector2i:
+	for core_position in enemy_cores:
+		var data: Dictionary = enemy_cores[core_position]
+		if int(data.get("hp", 0)) <= 0 or not bool(data.get("active", false)):
+			continue
+		for adjacent in neighbors(core_position):
+			if adjacent == core_pos or is_enemy_core_slot(adjacent):
+				continue
+			var cell := get_cell(adjacent)
+			if cell.terrain == GameDefinitions.TerrainType.NONE:
+				cell.terrain = GameDefinitions.TerrainType.PLAIN
+				cell.piece_id = next_piece_id
+				cell.pollution = 0
+				cell.visual_rotation = 0
+				next_piece_id += 1
+		recalculate_all_deities()
+		board_changed.emit()
+		queue_redraw()
+		return core_position
+	return Vector2i(-1, -1)
 
 
 func terrain_deity_preview(pos: Vector2i, deity_type: int) -> String:
@@ -2407,7 +2533,7 @@ func terrain_domain_description(pos: Vector2i) -> String:
 		names.append(str(GameDefinitions.TERRAIN_NAMES[int(terrain)]))
 	var threshold := int(GameDefinitions.BALANCE.large_domain_threshold)
 	return (
-		"%s神域\n面积：%d格\n大型技能：%s（%s）\n征祇：%s\n佑祇：%s\n相邻异类神域：%s"
+		"%s神域\n面积：%d格\n大型技能：%s：%s\n征祇：%s\n佑祇：%s\n相邻异类神域：%s"
 		% [
 			GameDefinitions.TERRAIN_NAMES[get_cell(pos).terrain],
 			region.size(),
@@ -2465,6 +2591,7 @@ func activate_large_domain_skill(pos: Vector2i) -> bool:
 		large_domain_skill_name(pos),
 	])
 	board_changed.emit()
+	tutorial_event.emit("large_skill_used", {"pos": pos})
 	queue_redraw()
 	return true
 
@@ -2625,16 +2752,9 @@ func reset_large_domain_state() -> void:
 func _check_victory() -> void:
 	if (
 		completion_emitted
-		or fill_ratio() < 0.999
 		or living_enemy_core_count() > 0
 		or GameManager.core_hp <= 0
 	):
-		return
-	if activated_anchor_count() < required_anchor_count():
-		GameManager.post_message(
-			"地图已填满，但仍有 %d 个地形锚点尚未激活"
-			% (required_anchor_count() - activated_anchor_count())
-		)
 		return
 	completion_emitted = true
 	map_completed.emit()
@@ -2709,7 +2829,7 @@ func _enemy_at_visual_position(local_position: Vector2) -> Vector2i:
 		var enemy := get_cell(pos).enemy as EnemyInstance
 		if not enemy:
 			continue
-		var visual_grid := enemy.visual_from.lerp(enemy.visual_to, _smoothstep(enemy.visual_progress))
+		var visual_grid := _enemy_visual_grid(enemy)
 		var center := visual_grid * CELL_SIZE + Vector2.ONE * CELL_SIZE * 0.5
 		var distance := center.distance_to(local_position)
 		if distance <= CELL_SIZE * 0.58 and distance < best_distance:
@@ -2781,6 +2901,7 @@ func _handle_click(pos: Vector2i) -> void:
 		selected_pos = pos
 		range_reveal_started_at = pulse_time
 		deity_selected.emit(pos)
+		tutorial_event.emit("deity_selected", {"pos": pos})
 		queue_redraw()
 		return
 	elif TurnManager.current_phase == TurnManager.Phase.BUILD and get_cell(pos).piece_id >= 0:
@@ -2831,7 +2952,6 @@ func _draw() -> void:
 	_draw_core()
 	_draw_entities()
 	_draw_preview()
-	_draw_preview_routes()
 	_draw_focus_desaturation()
 	_draw_selected_attack_range()
 	_draw_large_domain_effects()
@@ -2924,7 +3044,7 @@ func _draw_focus_desaturation() -> void:
 		_draw_deity(cell.deity as DeityInstance, cell.terrain, rect, selected_pos)
 	elif cell.enemy:
 		var enemy := cell.enemy as EnemyInstance
-		var visual_grid := enemy.visual_from.lerp(enemy.visual_to, _smoothstep(enemy.visual_progress))
+		var visual_grid := _enemy_visual_grid(enemy)
 		var enemy_rect := Rect2(
 			visual_grid * CELL_SIZE + Vector2.ONE,
 			Vector2(CELL_SIZE - 2, CELL_SIZE - 2)
@@ -3306,12 +3426,12 @@ func _draw_route_time_change(
 	var after_cost := _path_total_cost(after_path, terrain_overrides)
 	var base_interval := float(GameDefinitions.BALANCE.enemy_move_interval)
 	var before_text := (
-		"阻断"
+		"闃绘柇"
 		if is_inf(before_cost)
 		else "%.1fs" % (before_cost * base_interval)
 	)
 	var after_text := (
-		"阻断"
+		"闃绘柇"
 		if is_inf(after_cost)
 		else "%.1fs" % (after_cost * base_interval)
 	)
@@ -3321,7 +3441,7 @@ func _draw_route_time_change(
 	draw_string(
 		ThemeDB.fallback_font,
 		label_rect.position + Vector2(3, 14),
-		"%s → %s" % [before_text, after_text],
+		"%s 鈫?%s" % [before_text, after_text],
 		HORIZONTAL_ALIGNMENT_CENTER,
 		label_rect.size.x - 6,
 		12,
@@ -3396,7 +3516,7 @@ func _draw_entities() -> void:
 			_draw_deity(cell.deity as DeityInstance, cell.terrain, rect, pos)
 		else:
 			var enemy := cell.enemy as EnemyInstance
-			var visual_grid := enemy.visual_from.lerp(enemy.visual_to, _smoothstep(enemy.visual_progress))
+			var visual_grid := _enemy_visual_grid(enemy)
 			var visual_rect := Rect2(
 				visual_grid * CELL_SIZE + Vector2.ONE,
 				Vector2(CELL_SIZE - 2, CELL_SIZE - 2)
@@ -3407,6 +3527,14 @@ func _draw_entities() -> void:
 func _smoothstep(value: float) -> float:
 	var t := clampf(value, 0.0, 1.0)
 	return t * t * (3.0 - 2.0 * t)
+
+
+func _enemy_visual_grid(enemy: EnemyInstance) -> Vector2:
+	var progress := _smoothstep(enemy.visual_progress)
+	var result := enemy.visual_from.lerp(enemy.visual_to, progress)
+	if enemy.visual_arc_height > 0.0 and progress < 1.0:
+		result.y -= sin(progress * PI) * enemy.visual_arc_height
+	return result
 
 
 func _draw_terrain_particles(pos: Vector2i, rect: Rect2, terrain: int) -> void:
@@ -3549,7 +3677,7 @@ func _draw_deity(
 	draw_circle(rect.get_center(), 18.0, Color("171922"))
 	draw_circle(rect.get_center(), 15.0, color)
 	draw_circle(rect.get_center(), 18.0, Color.WHITE, false, 2.0)
-	draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 11), "神%d" % deity.hp, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color.WHITE)
+	draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 11), "绁?d" % deity.hp, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color.WHITE)
 	_draw_deity_level_visual(rect.get_center(), rect.size.x, deity.level, color)
 
 
@@ -3627,7 +3755,7 @@ func _draw_enemy(enemy: EnemyInstance, rect: Rect2, grid_pos: Vector2i) -> void:
 			draw_string(
 				ThemeDB.fallback_font,
 				rect.get_center() + Vector2(15, -16),
-				"×%d" % stack_count,
+				"脳%d" % stack_count,
 				HORIZONTAL_ALIGNMENT_LEFT,
 				-1,
 				12,
@@ -3641,7 +3769,7 @@ func _draw_enemy(enemy: EnemyInstance, rect: Rect2, grid_pos: Vector2i) -> void:
 	draw_circle(rect.get_center(), 15.0, Color("d94c62"))
 	draw_line(rect.get_center() - Vector2(7, 7), rect.get_center() + Vector2(7, 7), Color.WHITE, 2.0)
 	draw_line(rect.get_center() + Vector2(7, -7), rect.get_center() + Vector2(-7, 7), Color.WHITE, 2.0)
-	draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 11), "敌%d" % enemy.hp, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color.WHITE)
+	draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 11), "鏁?d" % enemy.hp, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color.WHITE)
 	_draw_enemy_status_marks(enemy, rect.get_center())
 
 

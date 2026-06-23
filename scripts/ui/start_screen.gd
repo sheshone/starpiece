@@ -4,7 +4,6 @@ extends Control
 signal start_requested
 signal load_requested
 
-const PlanetCubeViewScript := preload("res://scripts/ui/planet_cube_view.gd")
 const MenuAmbientScript := preload("res://scripts/ui/menu_ambient.gd")
 const AttentionRingScript := preload("res://scripts/ui/attention_ring.gd")
 
@@ -147,7 +146,7 @@ func _build_menu() -> void:
 	right_footer.add_theme_constant_override("separation", 14)
 	add_child(right_footer)
 	_add_home_page_button(right_footer, "图鉴", "button_home_codex", "icon_codex", "codex")
-	_add_home_page_button(right_footer, "星球", "button_home_planet", "icon_planet", "planet")
+	_add_home_page_button(right_footer, "存档", "button_home_planet", "icon_planet", "planet")
 
 
 
@@ -329,91 +328,63 @@ func _build_leaderboard_page(parent: VBoxContainer) -> void:
 
 
 func _build_planet_page(parent: VBoxContainer) -> void:
-	_page_title(parent, "形成中的立方星球")
-	var planet_heading := parent.get_child(parent.get_child_count() - 1) as Label
-	planet_heading.add_theme_color_override("font_color", Color("f4dfb1"))
-	planet_heading.add_theme_color_override("font_outline_color", Color(0.06, 0.035, 0.025, 0.96))
-	planet_heading.add_theme_constant_override("outline_size", 5)
-	var planets: Array = ProgressManager.planet_history.duplicate(true)
-	var current_faces := ProgressManager.current_planet_faces.duplicate(true)
-	if current_faces.is_empty():
-		for face_index in range(1, ProgressManager.MAX_MAPS + 1):
-			var record: Dictionary = ProgressManager.records.get("map_%d" % face_index, {})
-			var snapshot: Array = record.get("terrain_snapshot", [])
-			if snapshot.size() == 121:
-				current_faces[str(face_index)] = snapshot
-	planets.append({
-		"completed_faces": ProgressManager.completed_maps,
-		"faces": current_faces,
-		"current": true,
-	})
-	var state := {"index": planets.size() - 1}
-	var cube := PlanetCubeViewScript.new()
-	parent.add_child(cube)
-	var planet_title := Label.new()
-	planet_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	planet_title.add_theme_font_size_override("font_size", 18)
-	planet_title.add_theme_color_override("font_color", Color("f2ddb0"))
-	planet_title.add_theme_color_override("font_outline_color", Color(0.04, 0.025, 0.02, 0.96))
-	planet_title.add_theme_constant_override("outline_size", 5)
-	parent.add_child(planet_title)
-	var navigation := HBoxContainer.new()
-	navigation.alignment = BoxContainer.ALIGNMENT_CENTER
-	navigation.add_theme_constant_override("separation", 20)
-	parent.add_child(navigation)
-	var previous := Button.new()
-	previous.text = "上一颗"
-	previous.custom_minimum_size = Vector2(112, 42)
-	AssetCatalog.apply_button_visual(previous)
-	navigation.add_child(previous)
-	var next := Button.new()
-	next.text = "下一颗"
-	next.custom_minimum_size = Vector2(112, 42)
-	AssetCatalog.apply_button_visual(next)
-	navigation.add_child(next)
-	var refresh_planet := func() -> void:
-		var planet: Dictionary = planets[int(state.index)]
-		var face_dictionary: Dictionary = planet.get("faces", {})
-		var faces: Array = []
-		for face_index in range(1, ProgressManager.MAX_MAPS + 1):
-			faces.append(face_dictionary.get(str(face_index), []))
-		cube.set_snapshots(faces)
-		var current_suffix := "（当前）" if bool(planet.get("current", false)) else ""
-		planet_title.text = "星球 %d / %d%s　已完成 %d 面" % [
-			int(state.index) + 1,
-			planets.size(),
-			current_suffix,
-			int(planet.get("completed_faces", 0)),
-		]
-		previous.disabled = int(state.index) <= 0
-		next.disabled = int(state.index) >= planets.size() - 1
-	previous.pressed.connect(func() -> void:
-		state.index = maxi(0, int(state.index) - 1)
-		refresh_planet.call()
-	)
-	next.pressed.connect(func() -> void:
-		state.index = mini(planets.size() - 1, int(state.index) + 1)
-		refresh_planet.call()
-	)
-	refresh_planet.call()
-	var hint := Label.new()
-	hint.text = "拖动立方体旋转；完成的地图会成为星球表面。"
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint.add_theme_font_size_override("font_size", 17)
-	hint.add_theme_color_override("font_color", Color("ead6ab"))
-	hint.add_theme_color_override("font_outline_color", Color(0.04, 0.025, 0.02, 0.96))
-	hint.add_theme_constant_override("outline_size", 4)
-	parent.add_child(hint)
-	var status := Label.new()
-	status.text = "六面已闭合，星球形成。" if ProgressManager.completed_maps >= 6 else "完成六张地图后形成完整立方星球。"
-	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status.add_theme_color_override("font_color", Color("ead6ab"))
-	status.add_theme_color_override("font_outline_color", Color(0.04, 0.025, 0.02, 0.96))
-	status.add_theme_constant_override("outline_size", 4)
-	parent.add_child(status)
+	_page_title(parent, "??")
+	var save_heading := parent.get_child(parent.get_child_count() - 1) as Label
+	save_heading.add_theme_color_override("font_color", Color("f4dfb1"))
+	save_heading.add_theme_color_override("font_outline_color", Color(0.06, 0.035, 0.025, 0.96))
+	save_heading.add_theme_constant_override("outline_size", 5)
+
+	var intro := Label.new()
+	intro.text = "??????????????????????????"
+	intro.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	intro.add_theme_font_size_override("font_size", 17)
+	intro.add_theme_color_override("font_color", Color("ead6ab"))
+	intro.add_theme_color_override("font_outline_color", Color(0.04, 0.025, 0.02, 0.96))
+	intro.add_theme_constant_override("outline_size", 4)
+	parent.add_child(intro)
+
+	var summary := Label.new()
+	summary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	summary.add_theme_font_size_override("font_size", 18)
+	summary.add_theme_color_override("font_color", Color("f2ddb0"))
+	summary.add_theme_color_override("font_outline_color", Color(0.04, 0.025, 0.02, 0.96))
+	summary.add_theme_constant_override("outline_size", 5)
+	var checkpoint_text := "?????????" if not ProgressManager.run_checkpoint.is_empty() else "??????????"
+	summary.text = "%s
+??????%d / %d
+?????%d ?" % [
+		checkpoint_text,
+		ProgressManager.completed_maps,
+		ProgressManager.MAX_MAPS,
+		ProgressManager.planet_history.size(),
+	]
+	parent.add_child(summary)
+
+	var list := Label.new()
+	list.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	list.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	list.add_theme_font_size_override("font_size", 15)
+	list.add_theme_color_override("font_color", Color("51321d"))
+	var lines: Array[String] = []
+	for map_index in range(1, ProgressManager.MAX_MAPS + 1):
+		var record: Dictionary = ProgressManager.records.get("map_%d" % map_index, {})
+		if record.is_empty():
+			lines.append("?%d??????" % map_index)
+		else:
+			lines.append("?%d????? %d??? %.1f ?" % [
+				map_index,
+				int(record.get("highest_score", 0)),
+				float(record.get("fastest_time", 0.0)),
+			])
+	list.text = "
+".join(lines)
+	parent.add_child(list)
+
 	if not ProgressManager.run_checkpoint.is_empty():
 		var continue_button := Button.new()
-		continue_button.text = "继续当前星球"
+		continue_button.text = "??????"
 		continue_button.custom_minimum_size = Vector2(190, 48)
 		AssetCatalog.apply_button_visual(continue_button)
 		continue_button.pressed.connect(func() -> void:
@@ -466,6 +437,15 @@ func _build_home_settings_page(parent: VBoxContainer) -> void:
 		fullscreen.text = "窗口" if _is_fullscreen() else "全屏"
 	)
 	parent.add_child(fullscreen)
+	var quit := Button.new()
+	quit.text = "退出到桌面"
+	quit.custom_minimum_size = Vector2(150, 42)
+	AssetCatalog.apply_button_visual(quit)
+	quit.pressed.connect(func() -> void:
+		AudioManager.play_sfx_first(["button_help", "refresh"], -4.0)
+		get_tree().quit()
+	)
+	parent.add_child(quit)
 
 
 func _is_fullscreen() -> bool:

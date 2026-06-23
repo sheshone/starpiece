@@ -4,14 +4,43 @@ const Definitions := preload("res://scripts/data/game_definitions.gd")
 const DeityData := preload("res://scripts/data/deity_instance.gd")
 const EnemyData := preload("res://scripts/data/enemy_instance.gd")
 
+var _progress_manager: Node
+var _tutorial_seen_backup: Dictionary = {}
+
 
 func _initialize() -> void:
 	call_deferred("_run")
 
 
 func _fail(message: String) -> void:
+	_restore_tutorial_records()
 	push_error("SMOKE FAILED: %s" % message)
 	quit(1)
+
+
+func _restore_tutorial_records() -> void:
+	if not is_instance_valid(_progress_manager):
+		return
+	_progress_manager.tutorial_seen = _tutorial_seen_backup.duplicate(true)
+	_progress_manager.save_current_run()
+
+
+func _has_button_text(node: Node, expected: String) -> bool:
+	if node is Button and (node as Button).text == expected:
+		return true
+	for child in node.get_children():
+		if _has_button_text(child, expected):
+			return true
+	return false
+
+
+func _has_button_tooltip(node: Node, expected: String) -> bool:
+	if node is Button and (node as Button).tooltip_text == expected:
+		return true
+	for child in node.get_children():
+		if _has_button_tooltip(child, expected):
+			return true
+	return false
 
 
 func _run() -> void:
@@ -23,13 +52,36 @@ func _run() -> void:
 	root.add_child(game)
 	await process_frame
 	await process_frame
+	var initial_start_screen := game.get_node("UICanvas/StartScreen")
+	if not initial_start_screen.has_method("_add_home_quit_button"):
+		_fail("home desktop exit controls are missing")
+		return
 	game.call("_start_new_game")
 	await process_frame
 	var card_manager := root.get_node("/root/CardManager")
 	var turn_manager := root.get_node("/root/TurnManager")
 	var resource_manager := root.get_node("/root/ResourceManager")
+	var progress_manager := root.get_node("/root/ProgressManager")
+	var tutorial_manager := root.get_node("/root/TutorialManager")
+	_progress_manager = progress_manager
+	_tutorial_seen_backup = progress_manager.tutorial_seen.duplicate(true)
+	progress_manager.tutorial_seen.clear()
+	if int(ProjectSettings.get_setting("display/window/size/mode", -1)) != 3:
+		_fail("project is not configured to start in fullscreen mode")
+		return
 	if card_manager.shop_slots.size() != card_manager.SHOP_SIZE:
 		_fail("shop did not create five cards")
+		return
+	if int(progress_manager.current_map) != 0:
+		_fail("new game did not start in the introductory map")
+		return
+	var intro_card := card_manager.shop_slots[0] as TerrainCard
+	if (
+		not intro_card
+		or intro_card.terrain_type != Definitions.TerrainType.PLAIN
+		or intro_card.shape.size() != 1
+	):
+		_fail("introductory shop did not offer one single-cell plain card")
 		return
 	if int(turn_manager.current_phase) != 0:
 		_fail("new game did not enter build phase")
@@ -52,11 +104,63 @@ func _run() -> void:
 	if game_ui.start_button.disabled:
 		_fail("time flow button is disabled during build phase")
 		return
+	if not is_instance_valid(game_ui.quit_desktop_button):
+		_fail("in-game desktop exit button is missing")
+		return
+	if not _has_button_tooltip(game_ui.settings_panel, "退出到桌面"):
+		_fail("settings page desktop exit button is missing")
+		return
 	for control in hand.shop_controls:
 		if control.mouse_filter != Control.MOUSE_FILTER_IGNORE:
 			_fail("shop control layer blocks card or time-flow input")
 			return
 	var map := game.get_node("GameMap")
+	var intro_core := Vector2i(-1, -1)
+	for core_pos in map.enemy_cores:
+		intro_core = core_pos
+		break
+	if intro_core != Vector2i(5, 0):
+		_fail("introductory enemy core is not in the expected position")
+		return
+	if map.get_cell(Vector2i(5, 1)).terrain != Definitions.TerrainType.NONE:
+		_fail("introductory enemy core gap is already filled")
+		return
+	tutorial_manager.clear()
+	game.call("purchase_shop_card", 0)
+	if map.preview_pos != Vector2i(5, 1) or not map.can_place_terrain(map.preview_terrain, map.preview_pos, 0):
+		_fail("introductory card does not point to the final core gap")
+		return
+	if not map.place_preview_terrain():
+		_fail("introductory core gap could not be filled")
+		return
+	await process_frame
+	if str(tutorial_manager.active_step.get("id", "")) != "prologue_tile_placed":
+		_fail("placing the introductory tile did not prompt deity placement")
+		return
+	tutorial_manager.clear()
+	game.call("purchase_deity_at", Vector2i(5, 1), Definitions.DeityType.ATTACK)
+	if not map.get_cell(Vector2i(5, 1)).deity:
+		_fail("introductory attack deity could not be placed")
+		return
+	if str(tutorial_manager.active_step.get("id", "")) != "prologue_deity_ready":
+		_fail("placing the introductory deity did not prompt time flow")
+		return
+	tutorial_manager.clear()
+	map.call("_attack_enemy_core", Vector2i(5, 1), intro_core, int(Definitions.BALANCE.enemy_core_hp))
+	await process_frame
+	await process_frame
+	if int(progress_manager.current_map) != 1:
+		_fail("destroying the introductory core did not enter map one")
+		return
+	if str(tutorial_manager.active_step.get("id", "")) != "chapter_1_start":
+		_fail("map one did not show the destroy-all-cores objective")
+		return
+	if map.get_all_deity_positions().size() != 0:
+		_fail("introductory deity leaked into map one")
+		return
+	if map.enemy_cores.size() != int(Definitions.BALANCE.map_enemy_core_count.get(1, 2)):
+		_fail("map one enemy cores were not rebuilt")
+		return
 	if not is_equal_approx(float(map.domain_area_multiplier(10)), 1.0):
 		_fail("domain area still changes ordinary attributes")
 		return
@@ -169,6 +273,7 @@ func _run() -> void:
 		_fail("combat cannot end after the field is clear")
 		return
 	print("SMOKE OK")
+	_restore_tutorial_records()
 	game.queue_free()
 	await process_frame
 	await process_frame

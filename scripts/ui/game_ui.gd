@@ -45,8 +45,16 @@ var core_info_popup: PanelContainer
 var core_info_label: Label
 var tutorial_panel: PanelContainer
 var tutorial_label: Label
+var tutorial_hide_serial: int = 0
+var tutorial_continue_button: Button
+var tutorial_highlight: PanelContainer
+var tutorial_previous_pause: bool = false
+var tutorial_previous_time_scale: float = 1.0
+var tutorial_active_pause: bool = false
+var tutorial_highlight_tween: Tween
 var menu_button: Button
 var main_menu_button: Button
+var quit_desktop_button: Button
 var cheat_panel: PanelContainer
 var deity_stat_row: HBoxContainer
 var settings_panel: PanelContainer
@@ -74,6 +82,8 @@ func _ready() -> void:
 	GameManager.state_changed.connect(_on_state_changed)
 	ResourceManager.resources_changed.connect(_on_state_changed)
 	CardManager.shop_changed.connect(_on_state_changed)
+	TutorialManager.tutorial_requested.connect(show_tutorial_step)
+	TutorialManager.tutorial_cleared.connect(hide_tutorial)
 	GameManager.game_started.connect(_connect_map)
 	var hand := get_node_or_null("../HandUI") as HandUI
 	if hand:
@@ -151,6 +161,18 @@ func _build_edge_hud() -> void:
 	AssetCatalog.apply_button_visual(
 		main_menu_button,
 		"button_main_menu" if AssetCatalog.texture("button_main_menu") else "icon_menu",
+		true
+	)
+	quit_desktop_button = _make_button("退出到桌面", self, _quit_to_desktop)
+	quit_desktop_button.position = Vector2(1804, 20)
+	quit_desktop_button.size = Vector2(96, 96)
+	quit_desktop_button.custom_minimum_size = Vector2(96, 96)
+	quit_desktop_button.process_mode = Node.PROCESS_MODE_ALWAYS
+	quit_desktop_button.z_index = 170
+	quit_desktop_button.tooltip_text = "退出到桌面"
+	AssetCatalog.apply_button_visual(
+		quit_desktop_button,
+		"button_quit" if AssetCatalog.texture("button_quit") else "icon_menu",
 		true
 	)
 
@@ -545,6 +567,10 @@ func _show_selected_deity(pos: Vector2i) -> void:
 	if not map or not deity:
 		return
 	_update_tactical_deity(pos)
+	if ProgressManager.current_map == 0:
+		deity_popup.visible = false
+		popup_interactive = false
+		return
 	_set_deity_popup_placement_mode()
 	upgrade_button_center.visible = true
 	popup_interactive = true
@@ -575,9 +601,9 @@ func _show_selected_deity(pos: Vector2i) -> void:
 		map.terrain_region(pos).size() >= int(GameDefinitions.BALANCE.large_domain_threshold)
 	)
 	var in_combat := TurnManager.current_phase == TurnManager.Phase.COMBAT
-	upgrade_button.visible = can_operate
-	remove_button.visible = can_operate
-	large_skill_button.visible = in_combat and large_ready
+	upgrade_button.visible = can_operate and ProgressManager.current_map != 0
+	remove_button.visible = can_operate and ProgressManager.current_map != 0
+	large_skill_button.visible = in_combat and large_ready and ProgressManager.current_map != 0
 	large_skill_button.disabled = not map.can_activate_large_domain_skill(pos)
 	large_skill_button.tooltip_text = (
 		"%s：本战斗阶段可发动一次" % map.large_domain_skill_name(pos)
@@ -597,6 +623,21 @@ func _show_selected_deity(pos: Vector2i) -> void:
 	deity_popup.reset_size()
 	_position_popup(pos)
 	_reveal_deity_popup()
+	if (
+		ProgressManager.current_map != 0
+		and can_operate
+		and deity.level < 3
+		and ResourceManager.can_afford(upgrade_cost)
+	):
+		var tutorial_delay := create_tween()
+		tutorial_delay.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+		tutorial_delay.tween_interval(0.24)
+		tutorial_delay.tween_callback(_trigger_deity_operation_tutorial.bind(pos))
+
+
+func _trigger_deity_operation_tutorial(pos: Vector2i) -> void:
+	if deity_popup.visible and popup_position == pos:
+		TutorialManager.trigger("deity_operation_opened", {"pos": pos})
 
 
 func _activate_selected_large_skill() -> void:
@@ -887,7 +928,7 @@ func _show_terrain_deities(pos: Vector2i) -> void:
 	resource_preview.visible = false
 	deity_separator.visible = false
 	attack_choice_button.visible = true
-	resource_choice_button.visible = true
+	resource_choice_button.visible = ProgressManager.current_map != 0
 	deity_button_row.visible = true
 	attack_choice_button.text = "安置 %s" % map.deity_form_name(pos, GameDefinitions.DeityType.ATTACK)
 	resource_choice_button.text = "安置 %s" % map.deity_form_name(pos, GameDefinitions.DeityType.RESOURCE)
@@ -902,8 +943,14 @@ func _show_terrain_deities(pos: Vector2i) -> void:
 	]
 	AssetCatalog.apply_button_visual(attack_choice_button, "icon_attack_deity", true)
 	AssetCatalog.apply_button_visual(resource_choice_button, "icon_resource_deity", true)
-	attack_choice_button.disabled = not ResourceManager.can_afford(map.deity_purchase_cost(GameDefinitions.DeityType.ATTACK))
-	resource_choice_button.disabled = not ResourceManager.can_afford(map.deity_purchase_cost(GameDefinitions.DeityType.RESOURCE))
+	attack_choice_button.disabled = (
+		not map.can_place_deity(GameDefinitions.DeityType.ATTACK, pos)
+		or not ResourceManager.can_afford(map.deity_purchase_cost(GameDefinitions.DeityType.ATTACK))
+	)
+	resource_choice_button.disabled = (
+		not map.can_place_deity(GameDefinitions.DeityType.RESOURCE, pos)
+		or not ResourceManager.can_afford(map.deity_purchase_cost(GameDefinitions.DeityType.RESOURCE))
+	)
 	_set_tactical_info(
 		"%s神域" % GameDefinitions.TERRAIN_NAMES[terrain],
 		map.terrain_domain_description(pos)
@@ -991,38 +1038,64 @@ func _create_debug_panel() -> void:
 
 
 func _create_tutorial_panel() -> void:
+	tutorial_highlight = PanelContainer.new()
+	tutorial_highlight.visible = false
+	tutorial_highlight.z_index = 174
+	tutorial_highlight.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tutorial_highlight.process_mode = Node.PROCESS_MODE_ALWAYS
+	var highlight_style := StyleBoxFlat.new()
+	highlight_style.bg_color = Color(1.0, 0.86, 0.35, 0.08)
+	highlight_style.border_color = Color(1.0, 0.92, 0.58, 0.92)
+	highlight_style.set_border_width_all(4)
+	highlight_style.set_corner_radius_all(18)
+	tutorial_highlight.add_theme_stylebox_override("panel", highlight_style)
+	add_child(tutorial_highlight)
+
 	tutorial_panel = PanelContainer.new()
 	tutorial_panel.visible = false
 	tutorial_panel.position = Vector2(366, 76)
-	tutorial_panel.size = Vector2(390, 108)
+	tutorial_panel.size = Vector2(470, 138)
 	tutorial_panel.z_index = 175
+	tutorial_panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	var transparent := StyleBoxFlat.new()
-	transparent.bg_color = Color(0.025, 0.04, 0.06, 0.34)
-	transparent.border_color = Color(0.62, 0.78, 0.88, 0.18)
-	transparent.set_border_width_all(1)
+	transparent.bg_color = Color(0.025, 0.04, 0.06, 0.58)
+	transparent.border_color = Color(0.72, 0.52, 0.30, 0.82)
+	transparent.set_border_width_all(2)
 	transparent.set_corner_radius_all(16)
 	tutorial_panel.add_theme_stylebox_override("panel", transparent)
 	add_child(tutorial_panel)
+	var stack := VBoxContainer.new()
+	stack.alignment = BoxContainer.ALIGNMENT_CENTER
+	stack.add_theme_constant_override("separation", 8)
+	tutorial_panel.add_child(stack)
 	var safe_area := MarginContainer.new()
 	safe_area.add_theme_constant_override("margin_left", 16)
 	safe_area.add_theme_constant_override("margin_right", 16)
 	safe_area.add_theme_constant_override("margin_top", 10)
 	safe_area.add_theme_constant_override("margin_bottom", 10)
-	tutorial_panel.add_child(safe_area)
+	stack.add_child(safe_area)
 	tutorial_label = Label.new()
 	tutorial_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tutorial_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	tutorial_label.add_theme_font_size_override("font_size", 15)
+	tutorial_label.add_theme_font_size_override("font_size", 20)
 	tutorial_label.add_theme_color_override("font_color", Color("f0e5d0"))
 	tutorial_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	safe_area.add_child(tutorial_label)
+	tutorial_continue_button = Button.new()
+	tutorial_continue_button.text = "继续"
+	tutorial_continue_button.custom_minimum_size = Vector2(120, 36)
+	tutorial_continue_button.visible = false
+	tutorial_continue_button.process_mode = Node.PROCESS_MODE_ALWAYS
+	tutorial_continue_button.pressed.connect(_dismiss_tutorial)
+	AssetCatalog.apply_button_visual(tutorial_continue_button)
+	stack.add_child(tutorial_continue_button)
 
 
 func _create_cheat_panel() -> void:
 	cheat_panel = PanelContainer.new()
 	cheat_panel.visible = false
 	cheat_panel.position = Vector2(20, 590)
-	cheat_panel.size = Vector2(290, 330)
+	cheat_panel.size = Vector2(310, 430)
 	cheat_panel.z_index = 1000
 	cheat_panel.process_mode = Node.PROCESS_MODE_ALWAYS
 	cheat_panel.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1035,6 +1108,8 @@ func _create_cheat_panel() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(title)
 	var actions := [
+		["获得一次刷新", "cheat_grant_refresh"],
+		["清除新手教程记录", "cheat_reset_tutorial"],
 		["增加 25 神力", "cheat_add_power"],
 		["恢复核心生命", "cheat_heal_core"],
 		["摧毁敌方核心", "cheat_destroy_enemy_cores"],
@@ -1122,6 +1197,29 @@ func _create_settings_panel() -> void:
 	)
 	fullscreen_button.text = "窗口" if _is_fullscreen() else "全屏"
 	content.add_child(fullscreen_button)
+	var save_button := Button.new()
+	save_button.text = "存档"
+	save_button.custom_minimum_size = Vector2(150, 42)
+	AssetCatalog.apply_button_visual(save_button)
+	save_button.pressed.connect(func() -> void:
+		if GameManager.scene_root and GameManager.scene_root.has_method("_save_checkpoint_if_possible"):
+			GameManager.scene_root.call("_save_checkpoint_if_possible")
+		ProgressManager.save_current_run()
+		GameManager.post_message("进度已保存")
+	)
+	content.add_child(save_button)
+	var quit_button := Button.new()
+	quit_button.text = "退出到桌面"
+	quit_button.tooltip_text = "退出到桌面"
+	quit_button.custom_minimum_size = Vector2(150, 42)
+	quit_button.process_mode = Node.PROCESS_MODE_ALWAYS
+	AssetCatalog.apply_button_visual(
+		quit_button,
+		"button_quit" if AssetCatalog.texture("button_quit") else "icon_menu",
+		true
+	)
+	quit_button.pressed.connect(_quit_to_desktop)
+	content.add_child(quit_button)
 
 
 func _create_tactical_panel() -> void:
@@ -1275,6 +1373,12 @@ func _request_main_menu() -> void:
 	menu_requested.emit()
 
 
+func _quit_to_desktop() -> void:
+	get_tree().paused = false
+	ProgressManager.save_current_run()
+	get_tree().quit()
+
+
 func _run_cheat(method_name: String) -> void:
 	if GameManager.scene_root and GameManager.scene_root.has_method(method_name):
 		GameManager.scene_root.call(method_name)
@@ -1337,8 +1441,206 @@ func show_tutorial(text: String) -> void:
 	tutorial_panel.visible = true
 
 
+func show_tutorial_step(step: Dictionary) -> void:
+	_restore_tutorial_time_state()
+	tutorial_hide_serial += 1
+	var serial := tutorial_hide_serial
+	show_tutorial(str(step.get("text", "")))
+	_show_tutorial_highlight(step)
+	tutorial_previous_pause = get_tree().paused
+	tutorial_previous_time_scale = Engine.time_scale
+	tutorial_active_pause = bool(step.get("pause", false))
+	var slow_motion := float(step.get("slow_motion", 1.0))
+	if slow_motion > 0.0 and slow_motion < 1.0:
+		Engine.time_scale = slow_motion
+	tutorial_continue_button.visible = tutorial_active_pause
+	if tutorial_active_pause:
+		get_tree().paused = true
+		return
+	var duration := float(step.get("duration", 0.0))
+	if duration > 0.0:
+		var tween := create_tween()
+		tween.tween_interval(duration)
+		tween.tween_callback(func() -> void:
+			if serial == tutorial_hide_serial:
+				TutorialManager.complete_active()
+		)
+
+
 func hide_tutorial() -> void:
+	tutorial_hide_serial += 1
 	tutorial_panel.visible = false
+	if tutorial_continue_button:
+		tutorial_continue_button.visible = false
+	if tutorial_highlight:
+		tutorial_highlight.visible = false
+	if tutorial_highlight_tween and tutorial_highlight_tween.is_valid():
+		tutorial_highlight_tween.kill()
+	_restore_tutorial_time_state()
+
+
+func _dismiss_tutorial() -> void:
+	TutorialManager.complete_active()
+
+
+func _restore_tutorial_time_state() -> void:
+	if tutorial_active_pause:
+		get_tree().paused = tutorial_previous_pause
+		tutorial_active_pause = false
+	Engine.time_scale = tutorial_previous_time_scale
+
+
+func _show_tutorial_highlight(step: Dictionary) -> void:
+	if not tutorial_highlight:
+		return
+	var rect := _tutorial_rect_for_step(step)
+	if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+		tutorial_highlight.visible = false
+		return
+	var local_pos := get_global_transform().affine_inverse() * rect.position
+	tutorial_highlight.position = local_pos - Vector2(8, 8)
+	tutorial_highlight.size = rect.size + Vector2(16, 16)
+	tutorial_highlight.pivot_offset = tutorial_highlight.size * 0.5
+	tutorial_highlight.visible = true
+	tutorial_highlight.modulate.a = 0.96
+	if tutorial_highlight_tween and tutorial_highlight_tween.is_valid():
+		tutorial_highlight_tween.kill()
+	tutorial_highlight_tween = create_tween().set_loops()
+	tutorial_highlight_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tutorial_highlight_tween.tween_property(tutorial_highlight, "scale", Vector2(1.035, 1.035), 0.55)
+	tutorial_highlight_tween.tween_property(tutorial_highlight, "scale", Vector2.ONE, 0.55)
+
+
+func _tutorial_rect_for_step(step: Dictionary) -> Rect2:
+	var highlights: Array = step.get("highlight", [])
+	var key := str(highlights[0]) if not highlights.is_empty() else ""
+	var payload: Dictionary = step.get("payload", {})
+	match key:
+		"time_button":
+			return _global_rect_for_control(start_button)
+		"upgrade_button":
+			return _global_rect_for_control(upgrade_button)
+		"remove_button":
+			return _global_rect_for_control(remove_button)
+		"large_skill_button":
+			return _global_rect_for_control(large_skill_button)
+		"migration_button":
+			return _hand_tutorial_rect("migration_button")
+		"shop_card":
+			return _hand_tutorial_rect("shop_card")
+		"shop":
+			return _shop_highlight_rect()
+		"operation_buttons":
+			return _combined_control_rect([upgrade_button, remove_button])
+		"resource":
+			return _global_rect_for_control(power_status)
+		"core":
+			return _cell_highlight_rect(_get_map().core_pos if _get_map() else Vector2i(-1, -1), 1.45)
+		"enemy_core":
+			if payload.has("pos"):
+				return _cell_highlight_rect(payload.get("pos"), 1.35)
+			return _first_enemy_core_rect()
+		"domain":
+			if payload.has("pos"):
+				return _domain_highlight_rect(payload.get("pos"))
+			return _map_highlight_rect()
+		"placement_cells":
+			return _placement_highlight_rect()
+		"deity", "enemy", "cell", "map":
+			if payload.has("pos"):
+				return _cell_highlight_rect(payload.get("pos"), 1.25)
+			return _map_highlight_rect()
+		_:
+			if payload.has("pos"):
+				return _cell_highlight_rect(payload.get("pos"), 1.2)
+			return _map_highlight_rect()
+
+
+func _global_rect_for_control(control: Control) -> Rect2:
+	if not is_instance_valid(control) or not control.visible:
+		return Rect2()
+	return Rect2(control.global_position, control.size)
+
+
+func _cell_highlight_rect(pos_value: Variant, scale_factor: float = 1.0) -> Rect2:
+	var map := _get_map()
+	if not map:
+		return Rect2()
+	var pos := pos_value as Vector2i
+	if pos == null or not map.is_in_bounds(pos):
+		return Rect2()
+	var top_left := map.to_global(map.grid_to_world(pos))
+	var cell_scale := map.get_global_transform().get_scale()
+	var size := Vector2(map.CELL_SIZE * absf(cell_scale.x), map.CELL_SIZE * absf(cell_scale.y)) * scale_factor
+	return Rect2(top_left + (Vector2(map.CELL_SIZE, map.CELL_SIZE) * cell_scale - size) * 0.5, size)
+
+
+func _map_highlight_rect() -> Rect2:
+	var map := _get_map()
+	if not map:
+		return Rect2()
+	var top_left := map.to_global(map.grid_to_world(Vector2i.ZERO))
+	var bottom_right := map.to_global(map.grid_to_world(Vector2i(map.GRID_W, map.GRID_H)))
+	return Rect2(top_left, bottom_right - top_left)
+
+
+func _shop_highlight_rect() -> Rect2:
+	var hand := get_node_or_null("../HandUI") as Control
+	if hand and hand.visible:
+		return Rect2(hand.global_position, hand.size)
+	return Rect2(Vector2(1380, 110), Vector2(320, 740))
+
+
+func _hand_tutorial_rect(kind: String) -> Rect2:
+	var hand := get_node_or_null("../HandUI") as HandUI
+	if hand:
+		return hand.tutorial_rect(kind)
+	return Rect2()
+
+
+func _combined_control_rect(controls: Array) -> Rect2:
+	var result := Rect2()
+	for control_variant in controls:
+		var control := control_variant as Control
+		var rect := _global_rect_for_control(control)
+		if rect.size.x <= 0.0 or rect.size.y <= 0.0:
+			continue
+		result = rect if result.size == Vector2.ZERO else result.merge(rect)
+	return result
+
+
+func _domain_highlight_rect(pos_value: Variant) -> Rect2:
+	var map := _get_map()
+	if not map:
+		return Rect2()
+	var pos: Vector2i = pos_value
+	if not map.is_in_bounds(pos):
+		return Rect2()
+	var result := Rect2()
+	for region_pos in map.terrain_region(pos):
+		var rect := _cell_highlight_rect(region_pos, 1.02)
+		result = rect if result.size == Vector2.ZERO else result.merge(rect)
+	return result
+
+
+func _placement_highlight_rect() -> Rect2:
+	var map := _get_map()
+	if not map or not map.preview_terrain:
+		return _map_highlight_rect()
+	var result := Rect2()
+	for offset in map.preview_terrain.rotated_shape(map.preview_rotation):
+		var rect := _cell_highlight_rect(map.preview_pos + offset, 1.08)
+		result = rect if result.size == Vector2.ZERO else result.merge(rect)
+	return result
+
+
+func _first_enemy_core_rect() -> Rect2:
+	var map := _get_map()
+	if not map:
+		return Rect2()
+	for pos in map.enemy_cores:
+		return _cell_highlight_rect(pos, 1.35)
+	return Rect2()
 
 
 func hide_result_overlay() -> void:

@@ -6,6 +6,8 @@ signal shop_card_unhovered
 
 var shop_nodes: Array[Control] = []
 var shop_controls: Array[Control] = []
+var refresh_button: Button
+var migrate_button: Button
 
 
 func _ready() -> void:
@@ -27,6 +29,8 @@ func _show_shop(slots: Array) -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	shop_controls.clear()
+	refresh_button = null
+	migrate_button = null
 	if TurnManager.current_phase != TurnManager.Phase.BUILD:
 		return
 	var scene: PackedScene = load("res://scenes/ui/card_display.tscn")
@@ -86,6 +90,8 @@ func _purchase(index: int) -> void:
 
 
 func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) -> void:
+	if ProgressManager.current_map == 0:
+		return
 	var controls := Control.new()
 	controls.position = Vector2.ZERO
 	controls.size = Vector2(1920, 1000)
@@ -93,6 +99,7 @@ func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) 
 	add_child(controls)
 	shop_controls.append(controls)
 	var refresh := Button.new()
+	refresh_button = refresh
 	var free_count := int(GameManager.scene_root.free_refreshes) if GameManager.scene_root else 0
 	refresh.text = "免费刷新 ×%d" % free_count
 	refresh.tooltip_text = refresh.text
@@ -109,6 +116,7 @@ func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) 
 	AssetCatalog.apply_button_visual(refresh, "icon_refresh", true, true)
 	controls.add_child(refresh)
 	var migrate := Button.new()
+	migrate_button = migrate
 	migrate.text = "迁移神祇"
 	migrate.tooltip_text = "进入神祇迁移模式"
 	migrate.position = migrate_position
@@ -128,6 +136,21 @@ func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) 
 		true
 	)
 	controls.add_child(migrate)
+
+
+func tutorial_rect(kind: String) -> Rect2:
+	match kind:
+		"shop_card":
+			for node in shop_nodes:
+				if is_instance_valid(node) and node.visible and node.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+					return Rect2(node.global_position, node.size)
+		"migration_button":
+			if is_instance_valid(migrate_button) and migrate_button.visible:
+				return Rect2(migrate_button.global_position, migrate_button.size)
+		"refresh_button":
+			if is_instance_valid(refresh_button) and refresh_button.visible:
+				return Rect2(refresh_button.global_position, refresh_button.size)
+	return Rect2()
 
 
 func _refresh_controls(_value: Variant = null) -> void:

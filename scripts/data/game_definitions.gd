@@ -309,10 +309,10 @@ const BALANCE := {
 	"enemy_core_mid_active": 5,
 	"enemy_core_late_active": 8,
 	# 每张地图固定放置的敌方核心数量。
-	"map_enemy_core_count": {1: 4, 2: 5, 3: 6, 4: 7, 5: 8, 6: 8},
+	"map_enemy_core_count": {0: 1, 1: 2, 2: 2, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6},
 	# 每张地图要求激活的地形锚点数量。
 	# 每关锚点数量；允许直接调整。后续关卡显著增加锚点密度。
-	"map_anchor_count": {1: 0, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10},
+	"map_anchor_count": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0},
 	# 每摧毁一座敌方核心后，剩余核心生成间隔增加的比例。
 	"enemy_core_pressure_reduction": 0.07,
 
@@ -379,6 +379,7 @@ const BALANCE := {
 		"time_penalty_per_second": 1.2,
 		# 每激活一个锚点提供的分数。
 		"anchor": 180,
+		"fill_ratio": 600,
 		# 每点剩余神力提供的少量分数。
 		"resource": 2.0,
 	},

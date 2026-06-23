@@ -10,6 +10,7 @@ extends Resource
 @export var visual_to: Vector2 = Vector2.ZERO
 @export var visual_progress: float = 1.0
 @export var visual_duration: float = 0.28
+@export var visual_arc_height: float = 0.0
 @export var speed_multiplier: float = 1.0
 @export var archetype: String = "normal"
 @export var attack_range: int = 1
@@ -20,6 +21,8 @@ extends Resource
 @export var last_grid_pos: Vector2i = Vector2i(-1, -1)
 @export var river_region_id: int = -1
 @export var river_cooldown: float = 0.0
+@export var pending_river_push: bool = false
+@export var pending_river_delay: float = 0.0
 @export var forest_region_id: int = -1
 @export var confusion_time: float = 0.0
 @export var confusion_steps: int = 0

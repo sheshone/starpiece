@@ -11,7 +11,6 @@ var active_tile_card: TerrainCard
 var active_tile_shop_index: int = -1
 var built_attack_deities: int = 0
 var built_resource_deities: int = 0
-var tutorial_step: int = 0
 
 
 func _ready() -> void:
@@ -22,6 +21,8 @@ func _ready() -> void:
 	grid_map.placement_finished.connect(_on_placement_finished)
 	grid_map.map_completed.connect(_on_map_completed)
 	grid_map.enemy_core_destroyed.connect(_on_enemy_core_destroyed)
+	grid_map.enemy_spawned.connect(_on_enemy_spawned)
+	grid_map.tutorial_event.connect(_on_tutorial_event)
 	grid_map.board_changed.connect(_save_checkpoint_if_possible)
 	TurnManager.build_started.connect(_on_build_started)
 	TurnManager.combat_started.connect(_on_combat_started)
@@ -51,7 +52,7 @@ func _exit_tree() -> void:
 
 func _start_new_game() -> void:
 	ProgressManager.begin_run()
-	ProgressManager.begin_map(1)
+	ProgressManager.begin_map(0)
 	ResourceManager.reset()
 	built_attack_deities = 0
 	built_resource_deities = 0
@@ -60,11 +61,7 @@ func _start_new_game() -> void:
 	AudioManager.play_music("music_build", -9.0)
 	TurnManager.start_game_loop()
 	_reveal_gameplay()
-	tutorial_step = 0
-	game_ui.show_tutorial(
-		"目标：摧毁外围 %d 个敌方核心，再用地块填满所有可用位置。先从右侧购买地块。"
-		% grid_map.enemy_cores.size()
-	)
+	TutorialManager.trigger("level_started", {"map": ProgressManager.current_map})
 
 
 func _process(delta: float) -> void:
@@ -84,6 +81,7 @@ func _on_build_started() -> void:
 	if ProgressManager.blessing_value("build_free_refresh") > 0.0:
 		free_refreshes = maxi(free_refreshes, 1)
 	_save_checkpoint_if_possible()
+	_check_tutorial_operational_events()
 	GameManager.post_message("建设阶段：购买地块、规划地形并安置神祇")
 
 
@@ -137,6 +135,7 @@ func _load_saved_game() -> void:
 	AudioManager.play_music("music_build", -9.0)
 	TurnManager.enter_build_phase()
 	_reveal_gameplay()
+	TutorialManager.trigger("level_started", {"map": ProgressManager.current_map, "loaded": true})
 	GameManager.state_changed.emit()
 
 
@@ -145,15 +144,17 @@ func purchase_shop_card(index: int) -> void:
 	var card := CardManager.purchase_shop_card(index)
 	if not card:
 		GameManager.reject_action("无法购买：商店位置为空、神力不足或当前不是建设阶段")
+		TutorialManager.trigger("resource_insufficient")
 		return
 	AudioManager.play_sfx_first(["button_card_purchase", "purchase"])
 	active_tile_card = card
 	active_tile_shop_index = index
 	grid_map.begin_terrain_placement(card)
 	GameManager.state_changed.emit()
-	if tutorial_step == 0:
-		tutorial_step = 1
-		game_ui.show_tutorial("把地块放到中央核心旁边；按 R 旋转。最终需要把敌方核心被摧毁后留下的方向也连接填满。")
+	TutorialManager.trigger("terrain_card_purchased", {
+		"terrain": card.terrain_type,
+		"card_name": card.card_name,
+	})
 	GameManager.post_message("已购买%s：R 旋转，左键立即放置" % card.card_name)
 
 
@@ -181,11 +182,9 @@ func grant_free_refresh() -> void:
 
 func start_combat() -> void:
 	cancel_active_tile_purchase()
+	TutorialManager.clear()
 	if TurnManager.start_combat():
 		grid_map.clear_preview()
-		if tutorial_step == 3:
-			tutorial_step = 4
-			game_ui.hide_tutorial()
 
 
 func _on_placement_finished(success: bool) -> void:
@@ -196,9 +195,28 @@ func _on_placement_finished(success: bool) -> void:
 		if placed_card:
 			var terrain_key := AssetCatalog.terrain_suffix(placed_card.terrain_type)
 			AudioManager.play_sfx_first(["place_terrain_%s" % terrain_key, "place"])
-			if tutorial_step == 1:
-				tutorial_step = 2
-				game_ui.show_tutorial("新手引导 3/4：点击刚放下的神域，选择一座神祇。")
+			var placement_payload := {
+				"terrain": placed_card.terrain_type,
+				"pos": (
+					grid_map.last_placed_positions[0]
+					if not grid_map.last_placed_positions.is_empty()
+					else grid_map.core_pos
+				),
+			}
+			if ProgressManager.current_map == 0:
+				TutorialManager.clear()
+				TutorialManager.trigger("prologue_tile_placed", placement_payload)
+			else:
+				TutorialManager.trigger("terrain_tile_placed", placement_payload)
+			TutorialManager.trigger("domain_created", {
+				"terrain": placed_card.terrain_type,
+				"pos": (
+					grid_map.last_placed_positions[0]
+					if not grid_map.last_placed_positions.is_empty()
+					else grid_map.core_pos
+				),
+			})
+			_check_tutorial_domain_events()
 		else:
 			AudioManager.play_sfx("place")
 		GameManager.post_message("放置完成，可继续购买地块或点击地块召请神祇")
@@ -217,9 +235,18 @@ func purchase_deity_at(pos: Vector2i, deity_type: int) -> void:
 			"place_deity_%s_%s" % [role, AssetCatalog.terrain_suffix(terrain)],
 			"place",
 		])
-		if tutorial_step == 2:
-			tutorial_step = 3
-			game_ui.show_tutorial("新手引导 4/4：点击右下角时间流动，开始自动战斗。")
+		TutorialManager.trigger("deity_built", {
+			"terrain": terrain,
+			"deity_type": deity_type,
+			"pos": pos,
+		})
+		if ProgressManager.current_map != 0:
+			TutorialManager.trigger(_deity_tutorial_trigger(terrain, deity_type), {
+				"terrain": terrain,
+				"deity_type": deity_type,
+				"pos": pos,
+			})
+		_check_tutorial_domain_events()
 		GameManager.post_message("%s已安置" % grid_map.deity_form_name(pos, deity_type))
 
 
@@ -239,6 +266,8 @@ func _on_combat_started(_duration: float) -> void:
 	grid_map.reset_combat_timers()
 	AudioManager.play_sfx("phase_combat")
 	AudioManager.play_music("music_combat", -8.0)
+	TutorialManager.trigger("combat_started", {"round": GameManager.current_round})
+	_check_tutorial_domain_events()
 	GameManager.post_message("自动战斗开始：敌人与神祇将自行行动")
 
 
@@ -246,11 +275,13 @@ func _on_combat_ended(_round_number: int) -> void:
 	var income := float(GameDefinitions.BALANCE.combat_base_income)
 	ResourceManager.add_divine_power(income)
 	ProgressManager.add_stat("base_income", income)
+	TutorialManager.trigger("resource_gained", {"amount": income})
 	var interest := grid_map.collect_abundance_interest()
 	grid_map.reset_large_domain_state()
 	if interest > 0.0:
 		GameManager.post_message("丰饶神利息：+%.1f 神力" % interest)
 	GameManager.post_message("中央核心稳定产出 %.1f 神力" % income)
+	_check_tutorial_operational_events()
 
 
 func can_end_combat() -> bool:
@@ -269,6 +300,7 @@ func _reveal_gameplay() -> void:
 	var map_target_scale := grid_map.scale
 	grid_map.scale = map_target_scale * 0.86
 	var tween := create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 	tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_property(grid_map, "modulate:a", 1.0, 0.55)
 	tween.parallel().tween_property(grid_map, "scale", map_target_scale, 0.7)
@@ -279,8 +311,13 @@ func _reveal_gameplay() -> void:
 
 
 func _on_map_completed() -> void:
+	TutorialManager.trigger("level_completed", {"map": ProgressManager.current_map})
 	TurnManager.finish_game()
 	ProgressManager.clear_run_checkpoint()
+	if ProgressManager.current_map == 0:
+		TutorialManager.clear()
+		call_deferred("_start_second_map", "")
+		return
 	var snapshot := _build_result_snapshot()
 	var result := ProgressManager.register_map_result(ProgressManager.current_map, snapshot)
 	game_ui.show_map_result(
@@ -326,12 +363,13 @@ func _build_result_snapshot() -> Dictionary:
 		"shop_refreshes": int(ProgressManager.stats.get("shop_refreshes", 0)),
 		"collapsed_cells": int(ProgressManager.stats.get("collapsed_cells", 0)),
 		"anchors": grid_map.activated_anchor_count(),
+		"fill_ratio": grid_map.fill_ratio(),
 		"terrain_snapshot": terrain_snapshot,
 	}
 
 
 func _show_blessings() -> void:
-	game_ui.show_blessing_choices(ProgressManager.blessing_choices())
+	_start_second_map("")
 
 
 func _start_second_map(id: String) -> void:
@@ -350,6 +388,7 @@ func _start_second_map(id: String) -> void:
 	ResourceManager.reset()
 	grid_map.reset_board()
 	TurnManager.start_game_loop()
+	TutorialManager.trigger("level_started", {"map": ProgressManager.current_map})
 	if ProgressManager.blessing_value("random_domino") > 0.0:
 		_grant_random_domino()
 	GameManager.state_changed.emit()
@@ -370,6 +409,17 @@ func cheat_destroy_enemy_cores() -> void:
 		data.hp = 0
 		data.active = false
 	grid_map.queue_redraw()
+	grid_map._check_victory()
+
+
+func cheat_grant_refresh() -> void:
+	grant_free_refresh()
+
+
+func cheat_reset_tutorial() -> void:
+	TutorialManager.reset_seen_for_testing()
+	TutorialManager.clear()
+	GameManager.post_message("新手教程记录已清除，下次触发将重新显示")
 
 
 func cheat_fill_map() -> void:
@@ -421,11 +471,93 @@ func _return_to_menu() -> void:
 
 
 func _on_enemy_core_destroyed(_pos: Vector2i) -> void:
+	TutorialManager.trigger("enemy_core_destroyed", {"pos": _pos})
 	var original := position
 	var tween := create_tween()
 	for offset in [Vector2(8, 0), Vector2(-7, 5), Vector2(5, -6), Vector2.ZERO]:
 		tween.tween_property(self, "position", original + offset, 0.045)
 	tween.tween_property(self, "position", original, 0.06)
+
+
+func _on_enemy_spawned(pos: Vector2i) -> void:
+	TutorialManager.trigger("enemy_spawned", {"pos": pos})
+
+
+func _on_tutorial_event(event_name: String, payload: Dictionary) -> void:
+	TutorialManager.trigger(event_name, payload)
+	if event_name in ["deity_upgraded", "deity_migrated", "deity_removed", "resource_gained"]:
+		_check_tutorial_operational_events()
+
+
+func _check_tutorial_domain_events() -> void:
+	var threshold := int(GameDefinitions.BALANCE.large_domain_threshold)
+	for pos in grid_map.get_all_deity_positions():
+		var cell := grid_map.get_cell(pos)
+		if not cell or not cell.deity:
+			continue
+		var context := grid_map.deity_domain_context(pos)
+		var resonances: Dictionary = context.get("resonances", {})
+		for value in resonances.values():
+			if bool(value):
+				TutorialManager.trigger("domain_adjacency_created", {
+					"pos": pos,
+					"tutorial_text": "神域已经形成邻接，当前效果：\n%s"
+						% grid_map.deity_active_effects_description(pos),
+				})
+				break
+		if int(context.get("area", 0)) >= threshold:
+			TutorialManager.trigger("large_domain_ready", {"pos": pos})
+			if TurnManager.current_phase == TurnManager.Phase.COMBAT:
+				TutorialManager.trigger("large_skill_button_visible", {
+					"pos": pos,
+					"tutorial_text": "%s\n点击主动技能按钮释放；本场战斗仅可使用一次。"
+						% grid_map.large_domain_skill_description(pos),
+				})
+	_check_tutorial_operational_events()
+
+
+func _check_tutorial_operational_events() -> void:
+	if ProgressManager.current_map == 0:
+		for core_pos in grid_map.enemy_cores:
+			var core_data: Dictionary = grid_map.enemy_cores[core_pos]
+			if (
+				int(core_data.get("hp", 0)) > 0
+				and grid_map._enemy_core_is_surrounded_by_terrain(core_pos)
+			):
+				TutorialManager.trigger("enemy_core_attackable", {"pos": core_pos})
+				break
+		return
+	var deity_positions := grid_map.get_all_deity_positions()
+	var deity_count := deity_positions.size()
+	var migration_threshold := 4
+	for pos in deity_positions:
+		var cell := grid_map.get_cell(pos)
+		if not cell or not cell.deity:
+			continue
+		var deity := cell.deity as DeityInstance
+		if grid_map.terrain_region(pos).size() >= migration_threshold:
+			TutorialManager.trigger("migration_available", {"pos": pos})
+	if deity_count >= 2 and ResourceManager.can_afford(grid_map.deity_removal_cost()):
+		TutorialManager.trigger("remove_available", {"pos": deity_positions[0]})
+	for core_pos in grid_map.enemy_cores:
+		var data: Dictionary = grid_map.enemy_cores[core_pos]
+		if int(data.get("hp", 0)) > 0 and bool(data.get("active", false)) and grid_map._enemy_core_is_surrounded_by_terrain(core_pos):
+			TutorialManager.trigger("enemy_core_attackable", {"pos": core_pos})
+			break
+
+
+func _deity_tutorial_trigger(terrain: int, deity_type: int) -> String:
+	var attack := deity_type == GameDefinitions.DeityType.ATTACK
+	match terrain:
+		GameDefinitions.TerrainType.PLAIN:
+			return "swift_god_built" if attack else "vitality_god_built"
+		GameDefinitions.TerrainType.MOUNTAIN:
+			return "bombard_god_built" if attack else "stagnation_god_built"
+		GameDefinitions.TerrainType.RIVER:
+			return "shard_god_built" if attack else "vortex_god_built"
+		GameDefinitions.TerrainType.FOREST:
+			return "poison_god_built" if attack else "abundance_god_built"
+	return ""
 
 
 func _on_attack_visual_requested(

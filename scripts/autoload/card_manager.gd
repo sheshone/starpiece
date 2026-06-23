@@ -20,6 +20,12 @@ func refresh_shop() -> bool:
 	if TurnManager.current_phase != TurnManager.Phase.BUILD:
 		return false
 	shop_slots.clear()
+	if ProgressManager.current_map == 0:
+		shop_slots.append(_generate_prologue_card())
+		while shop_slots.size() < SHOP_SIZE:
+			shop_slots.append(null)
+		shop_changed.emit(shop_slots)
+		return true
 	for _i in range(SHOP_SIZE):
 		shop_slots.append(_generate_terrain_card())
 	shop_changed.emit(shop_slots)
@@ -56,10 +62,10 @@ func return_shop_card(index: int, card: TerrainCard) -> bool:
 
 func _generate_terrain_card() -> TerrainCard:
 	var shape_index := _weighted_shape_index()
-	var terrain: int = GameManager.rng.randi_range(
-		GameDefinitions.TerrainType.PLAIN,
-		GameDefinitions.TerrainType.RIVER
-	)
+	var available_terrains := _available_terrains_for_current_map()
+	var terrain: int = int(available_terrains[
+		GameManager.rng.randi_range(0, available_terrains.size() - 1)
+	])
 	var card := TerrainCard.new()
 	card.shape.assign(PieceShapeConfig.SHAPES[shape_index])
 	card.terrain_type = terrain
@@ -72,6 +78,36 @@ func _generate_terrain_card() -> TerrainCard:
 	card.description = ""
 	card.color = GameDefinitions.TERRAIN_COLORS[terrain]
 	return card
+
+
+func _generate_prologue_card() -> TerrainCard:
+	var card := TerrainCard.new()
+	card.shape.assign(PieceShapeConfig.SHAPES[0])
+	card.terrain_type = CardBase.TerrainType.PLAIN
+	card.card_name = "平原·单格"
+	card.divine_power_cost = float(GameDefinitions.BALANCE.terrain_card_cost_by_size.get(1, 1.0))
+	card.description = ""
+	card.color = GameDefinitions.TERRAIN_COLORS[GameDefinitions.TerrainType.PLAIN]
+	return card
+
+
+func _available_terrains_for_current_map() -> Array[int]:
+	if ProgressManager.current_map <= 1:
+		return [GameDefinitions.TerrainType.PLAIN]
+	if ProgressManager.current_map == 2:
+		return [GameDefinitions.TerrainType.PLAIN, GameDefinitions.TerrainType.MOUNTAIN]
+	if ProgressManager.current_map == 3:
+		return [
+			GameDefinitions.TerrainType.PLAIN,
+			GameDefinitions.TerrainType.MOUNTAIN,
+			GameDefinitions.TerrainType.RIVER,
+		]
+	return [
+		GameDefinitions.TerrainType.PLAIN,
+		GameDefinitions.TerrainType.MOUNTAIN,
+		GameDefinitions.TerrainType.RIVER,
+		GameDefinitions.TerrainType.FOREST,
+	]
 
 
 func _weighted_shape_index() -> int:
