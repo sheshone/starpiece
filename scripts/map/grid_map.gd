@@ -1264,10 +1264,16 @@ func _enemy_core_is_surrounded_by_terrain(pos: Vector2i) -> bool:
 		if adjacent == core_pos or is_enemy_core_slot(adjacent):
 			continue
 		checked += 1
-		var cell := get_cell(adjacent)
-		if not cell:
+		if not _enemy_core_adjacent_counts_as_sealed(adjacent):
 			return false
 	return checked > 0
+
+
+func _enemy_core_adjacent_counts_as_sealed(pos: Vector2i) -> bool:
+	var cell := get_cell(pos)
+	if not cell:
+		return false
+	return cell.terrain != GameDefinitions.TerrainType.NONE
 
 
 func _attack_enemy_core(source: Vector2i, target: Vector2i, damage: int) -> void:

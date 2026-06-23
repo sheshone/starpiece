@@ -135,9 +135,12 @@ func _build_menu() -> void:
 	_add_home_page_button(left_footer, "本地排行", "button_home_leaderboard", "icon_leaderboard", "leaderboard")
 
 	var center_footer := HBoxContainer.new()
-	center_footer.position = Vector2(914, 875)
+	center_footer.position = Vector2(860, 875)
+	center_footer.add_theme_constant_override("separation", 14)
 	add_child(center_footer)
 	_add_home_page_button(center_footer, "设置", "button_settings", "icon_settings", "settings")
+
+	_add_home_quit_button(center_footer)
 
 	var right_footer := HBoxContainer.new()
 	right_footer.position = Vector2(1660, 875)
@@ -172,6 +175,15 @@ func _add_home_page_button(
 ) -> void:
 	var button := _icon_button(tooltip, icon_key, Vector2(92, 92), fallback_key)
 	button.pressed.connect(_show_home_page.bind(page))
+	parent.add_child(button)
+
+
+func _add_home_quit_button(parent: Control) -> void:
+	var button := _icon_button("退出游戏", "button_main_menu", Vector2(92, 92), "icon_menu")
+	button.pressed.connect(func() -> void:
+		AudioManager.play_sfx_first(["button_help", "refresh"], -4.0)
+		get_tree().quit()
+	)
 	parent.add_child(button)
 
 
@@ -532,6 +544,12 @@ func _build_codex_page(parent: VBoxContainer) -> void:
 	)
 	glossary_page.add_child(right_glossary)
 	pages.append(glossary_page)
+	var enemy_page := Control.new()
+	enemy_page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	enemy_page.visible = false
+	page_host.add_child(enemy_page)
+	_build_enemy_codex_page(enemy_page)
+	pages.append(enemy_page)
 	var navigation_spacer := Control.new()
 	navigation_spacer.custom_minimum_size = Vector2(1, 16)
 	parent.add_child(navigation_spacer)
@@ -567,6 +585,45 @@ func _build_codex_page(parent: VBoxContainer) -> void:
 		refresh_page.call()
 	)
 	refresh_page.call()
+
+
+func _build_enemy_codex_page(parent: Control) -> void:
+	var title := Label.new()
+	title.text = "敌人类型"
+	title.position = Vector2(132, 42)
+	title.size = Vector2(420, 34)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", Color("51321d"))
+	parent.add_child(title)
+
+	var left := Label.new()
+	left.position = Vector2(132, 84)
+	left.size = Vector2(230, 235)
+	left.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	left.add_theme_font_size_override("font_size", 13)
+	left.add_theme_color_override("font_color", Color("51321d"))
+	left.text = (
+		"普通敌人：基础侵蚀体，沿路线靠近中央核心。\n\n"
+		+ "疾行敌人：生命较低但移动更快，适合用减速和范围攻击拦截。\n\n"
+		+ "重甲敌人：生命更高，移动较慢，需要更强火力或更大的神域加成。\n\n"
+		+ "远程敌人：接近神祇或核心前就能发起攻击，优先处理。"
+	)
+	parent.add_child(left)
+
+	var right := Label.new()
+	right.position = Vector2(392, 84)
+	right.size = Vector2(230, 235)
+	right.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	right.add_theme_font_size_override("font_size", 13)
+	right.add_theme_color_override("font_color", Color("51321d"))
+	right.text = (
+		"飞行敌人：更少受到地形通行影响，会用更直接的路线压迫核心。\n\n"
+		+ "游泳敌人：更适应河流，不会像普通敌人那样明显回避水域。\n\n"
+		+ "穿林敌人：更适应森林路线，森林不再能有效拖慢它。\n\n"
+		+ "敌方核心：出怪源头。周围被非混沌地形围满后，攻击神祇才会攻击它。"
+	)
+	parent.add_child(right)
 
 
 func _build_codex_column(parent: HBoxContainer, terrain: int, role: int) -> void:
