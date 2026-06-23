@@ -7,6 +7,7 @@ extends Resource
 @export var visual_rotation: int = 0
 @export var deity: Resource
 @export var enemy: Resource
+@export var enemy_stack: Array[Resource] = []
 @export var anchor_terrain: int = GameDefinitions.TerrainType.NONE
 @export var anchor_reward_claimed: bool = false
 @export var was_collapsed: bool = false

@@ -1,5 +1,22 @@
 # 文案与数值调整索引
 
+## 地图锚点数量
+
+逐关锚点数量位于：
+
+```text
+scripts/data/game_definitions.gd
+GameDefinitions.BALANCE.map_anchor_count
+```
+
+当前值：
+
+```text
+{1: 0, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10}
+```
+
+键为关卡编号，值为该关生成的锚点数量；当前最多支持 10 个预设锚点。
+
 ## 一、主要数值
 
 所有核心玩法数值集中在：

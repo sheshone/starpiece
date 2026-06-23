@@ -29,6 +29,7 @@ var upgrade_button: Button
 var upgrade_button_center: CenterContainer
 var migrate_button: Button
 var remove_button: Button
+var large_skill_button: Button
 var upgrade_cost_label: Label
 var remove_cost_label: Label
 var upgrade_preview: Label
@@ -92,6 +93,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_refresh_debug_panel()
 	if event.pressed and event.keycode == KEY_F4:
 		cheat_panel.visible = not cheat_panel.visible
+		if cheat_panel.visible:
+			cheat_panel.move_to_front()
 
 
 func _build_edge_hud() -> void:
@@ -115,7 +118,7 @@ func _build_edge_hud() -> void:
 	status_row.move_child(core_status, status_row.get_child_count() - 1)
 
 	start_button = _make_button("时间流动", self, _start_combat)
-	start_button.position = Vector2(1478, 410)
+	start_button.position = Vector2(1578, 410)
 	start_button.size = Vector2(180, 180)
 	start_button.custom_minimum_size = Vector2(180, 180)
 	start_button.set_meta("persistent_icon_outline", true)
@@ -334,6 +337,13 @@ func _create_deity_popup() -> void:
 	remove_cost_label.add_theme_font_size_override("font_size", 13)
 	remove_cost_label.add_theme_color_override("font_color", Color("f2dfbf"))
 	remove_action.add_child(_make_power_cost_row(remove_cost_label))
+	var large_action := VBoxContainer.new()
+	large_action.alignment = BoxContainer.ALIGNMENT_CENTER
+	deity_action_row.add_child(large_action)
+	large_skill_button = _make_button("神域技能", large_action, _activate_selected_large_skill)
+	large_skill_button.visible = false
+	large_skill_button.custom_minimum_size = Vector2(86, 86)
+	AssetCatalog.apply_button_visual(large_skill_button, "icon_attack", true, true)
 	# 迁移入口只保留在右侧操作区；这里保留隐藏引用，兼容旧状态清理代码。
 	migrate_button = Button.new()
 	migrate_button.visible = false
@@ -468,7 +478,7 @@ func _clear_selection_popup() -> void:
 	deity_popup.visible = false
 
 
-func _show_deity(pos: Vector2i) -> void:
+func _show_deity(pos: Vector2i, reveal: bool = true) -> void:
 	_set_deity_popup_paper_mode()
 	core_info_popup.visible = false
 	if popup_interactive:
@@ -491,6 +501,7 @@ func _show_deity(pos: Vector2i) -> void:
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
 	remove_button.visible = false
+	large_skill_button.visible = false
 	migrate_button.visible = false
 	upgrade_button_center.visible = false
 	migrate_button.visible = false
@@ -499,7 +510,8 @@ func _show_deity(pos: Vector2i) -> void:
 	deity_popup.custom_minimum_size = Vector2(220, 64)
 	deity_popup.reset_size()
 	_position_popup(pos)
-	_reveal_deity_popup()
+	if reveal:
+		_reveal_deity_popup()
 	return
 	attack_preview.text = (
 		"神域规模：%d 格\n仅计算上下左右连通的同类地形；同一神域最多一座神祇。\n\n%s"
@@ -515,6 +527,7 @@ func _show_deity(pos: Vector2i) -> void:
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
 	remove_button.visible = false
+	large_skill_button.visible = false
 	migrate_button.visible = false
 	popup_interactive = false
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -526,7 +539,7 @@ func _show_deity(pos: Vector2i) -> void:
 
 func _show_selected_deity(pos: Vector2i) -> void:
 	popup_interactive = false
-	_show_deity(pos)
+	_show_deity(pos, false)
 	var map := _get_map()
 	var deity := map.get_cell(pos).deity as DeityInstance if map else null
 	if not map or not deity:
@@ -558,11 +571,40 @@ func _show_selected_deity(pos: Vector2i) -> void:
 	remove_button.disabled = not ResourceManager.can_afford(removal_cost)
 	remove_button.tooltip_text = "移除该神祇"
 	remove_cost_label.text = "%.1f" % removal_cost
+	var large_ready := (
+		map.terrain_region(pos).size() >= int(GameDefinitions.BALANCE.large_domain_threshold)
+	)
+	var in_combat := TurnManager.current_phase == TurnManager.Phase.COMBAT
+	upgrade_button.visible = can_operate
+	remove_button.visible = can_operate
+	large_skill_button.visible = in_combat and large_ready
+	large_skill_button.disabled = not map.can_activate_large_domain_skill(pos)
+	large_skill_button.tooltip_text = (
+		"%s：本战斗阶段可发动一次" % map.large_domain_skill_name(pos)
+		if large_ready
+		else "神域达到%d格后解锁" % int(GameDefinitions.BALANCE.large_domain_threshold)
+	)
 	migrate_button.visible = false
-	deity_popup.custom_minimum_size = Vector2(230, 132)
+	if in_combat and not large_ready:
+		deity_popup.visible = false
+		popup_interactive = false
+		return
+	deity_popup.custom_minimum_size = (
+		Vector2(140, 132)
+		if in_combat
+		else Vector2(230, 132)
+	)
 	deity_popup.reset_size()
 	_position_popup(pos)
 	_reveal_deity_popup()
+
+
+func _activate_selected_large_skill() -> void:
+	var map := _get_map()
+	if not map or popup_position == Vector2i(-1, -1):
+		return
+	if map.activate_large_domain_skill(popup_position):
+		_show_selected_deity(popup_position)
 
 
 func _migrate_selected_deity() -> void:
@@ -632,6 +674,7 @@ func _show_enemy_info(pos: Vector2i) -> void:
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
 	remove_button.visible = false
+	large_skill_button.visible = false
 	migrate_button.visible = false
 	upgrade_button_center.visible = false
 	deity_stat_row.visible = false
@@ -796,6 +839,7 @@ func _show_terrain_info(pos: Vector2i) -> void:
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
 	remove_button.visible = false
+	large_skill_button.visible = false
 	migrate_button.visible = false
 	upgrade_button_center.visible = false
 	deity_stat_row.visible = false
@@ -823,9 +867,16 @@ func _show_terrain_deities(pos: Vector2i) -> void:
 	var map := _get_map()
 	if not map:
 		return
+	var existing_deity_pos := map.region_deity_position(pos)
+	if existing_deity_pos != Vector2i(-1, -1):
+		deity_popup.visible = false
+		popup_interactive = false
+		_update_tactical_deity(existing_deity_pos)
+		return
 	upgrade_preview.visible = false
 	upgrade_button.visible = false
 	remove_button.visible = false
+	large_skill_button.visible = false
 	migrate_button.visible = false
 	upgrade_button_center.visible = false
 	deity_stat_row.visible = false
@@ -840,12 +891,23 @@ func _show_terrain_deities(pos: Vector2i) -> void:
 	deity_button_row.visible = true
 	attack_choice_button.text = "安置 %s" % map.deity_form_name(pos, GameDefinitions.DeityType.ATTACK)
 	resource_choice_button.text = "安置 %s" % map.deity_form_name(pos, GameDefinitions.DeityType.RESOURCE)
-	attack_choice_button.tooltip_text = attack_choice_button.text
-	resource_choice_button.tooltip_text = resource_choice_button.text
+	var terrain := map.get_cell(pos).terrain
+	attack_choice_button.tooltip_text = "%s\n%s" % [
+		attack_choice_button.text,
+		map.deity_ability_description(GameDefinitions.DeityType.ATTACK, terrain),
+	]
+	resource_choice_button.tooltip_text = "%s\n%s" % [
+		resource_choice_button.text,
+		map.deity_ability_description(GameDefinitions.DeityType.RESOURCE, terrain),
+	]
 	AssetCatalog.apply_button_visual(attack_choice_button, "icon_attack_deity", true)
 	AssetCatalog.apply_button_visual(resource_choice_button, "icon_resource_deity", true)
 	attack_choice_button.disabled = not ResourceManager.can_afford(map.deity_purchase_cost(GameDefinitions.DeityType.ATTACK))
 	resource_choice_button.disabled = not ResourceManager.can_afford(map.deity_purchase_cost(GameDefinitions.DeityType.RESOURCE))
+	_set_tactical_info(
+		"%s神域" % GameDefinitions.TERRAIN_NAMES[terrain],
+		map.terrain_domain_description(pos)
+	)
 	popup_interactive = true
 	deity_popup.mouse_filter = Control.MOUSE_FILTER_STOP
 	deity_popup.custom_minimum_size = Vector2(230, 120)
@@ -961,7 +1023,9 @@ func _create_cheat_panel() -> void:
 	cheat_panel.visible = false
 	cheat_panel.position = Vector2(20, 590)
 	cheat_panel.size = Vector2(290, 330)
-	cheat_panel.z_index = 185
+	cheat_panel.z_index = 1000
+	cheat_panel.process_mode = Node.PROCESS_MODE_ALWAYS
+	cheat_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(cheat_panel)
 	var content := VBoxContainer.new()
 	content.add_theme_constant_override("separation", 8)
@@ -988,7 +1052,7 @@ func _create_cheat_panel() -> void:
 func _create_settings_panel() -> void:
 	settings_panel = PanelContainer.new()
 	settings_panel.visible = false
-	settings_panel.position = Vector2(550, 220)
+	settings_panel.position = Vector2(710, 220)
 	settings_panel.size = Vector2(500, 520)
 	settings_panel.z_index = 195
 	settings_panel.process_mode = Node.PROCESS_MODE_ALWAYS
@@ -1048,11 +1112,21 @@ func _create_settings_panel() -> void:
 		AudioManager.set_music_volume(value / 100.0)
 	)
 	content.add_child(volume)
+	var fullscreen_button := Button.new()
+	fullscreen_button.text = "全屏"
+	fullscreen_button.custom_minimum_size = Vector2(150, 42)
+	AssetCatalog.apply_button_visual(fullscreen_button)
+	fullscreen_button.pressed.connect(func() -> void:
+		_toggle_fullscreen_from_settings()
+		fullscreen_button.text = "窗口" if _is_fullscreen() else "全屏"
+	)
+	fullscreen_button.text = "窗口" if _is_fullscreen() else "全屏"
+	content.add_child(fullscreen_button)
 
 
 func _create_tactical_panel() -> void:
 	tactical_panel = Control.new()
-	tactical_panel.position = Vector2(-36, 205)
+	tactical_panel.position = Vector2(-12, 205)
 	tactical_panel.size = Vector2(380, 570)
 	tactical_panel.z_index = 80
 	add_child(tactical_panel)
@@ -1120,20 +1194,18 @@ func _update_tactical_deity(pos: Vector2i) -> void:
 		return
 	var detail_context := map.deity_domain_context(pos)
 	var detail_area := int(detail_context.get("area", 1))
-	var detail_neighbors: Array = detail_context.get("adjacent_deities", [])
-	var detail_area_text := "不大" if detail_area <= 2 else ("比较大" if detail_area <= 6 else "很大")
-	var detail_friend_text := (
-		"不与其他神域"
-		if detail_neighbors.is_empty()
-		else ("与一个神域" if detail_neighbors.size() == 1 else ("与一些神域" if detail_neighbors.size() <= 3 else "与许多神域"))
-	)
+	var threshold := int(GameDefinitions.BALANCE.large_domain_threshold)
+	var detail_area_text := "神域还很小" if detail_area < threshold else "神域很大"
 	var detail_stats := map.deity_stats(pos)
+	var function_text := map.deity_function_description(pos)
 	_set_tactical_info(
 		map.deity_form_name(pos, deity.deity_type),
-		"神域%s，%s相邻。\n\n%s" % [
+		"%s\n\n%s（%d格）\n\n已获得：%s\n\n主动技能：%s" % [
+			function_text,
 			detail_area_text,
-			detail_friend_text,
-			map.deity_function_description(pos),
+			detail_area,
+			map.deity_active_effects_description(pos),
+			map.large_domain_skill_description(pos),
 		]
 	)
 	_add_icon_stat(tactical_stat_row, "icon_level", "icon_shaping", str(deity.level), "等级")
@@ -1142,13 +1214,34 @@ func _update_tactical_deity(pos: Vector2i) -> void:
 		_add_icon_stat(tactical_stat_row, "icon_damage", "icon_attack_deity", str(int(detail_stats.damage)), "伤害")
 		_add_icon_stat(tactical_stat_row, "icon_range", "icon_attack_deity", "%.1f" % float(detail_stats.range), "射程")
 	else:
-		_add_icon_stat(tactical_stat_row, "icon_production", "icon_resource_deity", "%.2f" % float(detail_stats.amount), "产量")
+		match map.get_cell(pos).terrain:
+			GameDefinitions.TerrainType.PLAIN:
+				_add_icon_stat(tactical_stat_row, "icon_core_hp", "icon_resource_deity", "%.2f" % float(detail_stats.amount), "治疗")
+			GameDefinitions.TerrainType.MOUNTAIN:
+				_add_icon_stat(tactical_stat_row, "icon_damage", "icon_attack_deity", "%.2f" % float(detail_stats.amount), "凝滞伤害")
+			GameDefinitions.TerrainType.RIVER:
+				_add_icon_stat(tactical_stat_row, "icon_range", "icon_resource_deity", "%.1f" % float(detail_stats.range), "控制范围")
+			GameDefinitions.TerrainType.FOREST:
+				_add_icon_stat(tactical_stat_row, "icon_production", "icon_resource_deity", "%.2f" % float(detail_stats.amount), "产量")
 
 
 func _toggle_settings() -> void:
 	settings_panel.visible = not settings_panel.visible
 	get_tree().paused = settings_panel.visible
 	_refresh_top_right_secondary_button()
+
+
+func _is_fullscreen() -> bool:
+	var mode := DisplayServer.window_get_mode()
+	return mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+
+
+func _toggle_fullscreen_from_settings() -> void:
+	DisplayServer.window_set_mode(
+		DisplayServer.WINDOW_MODE_WINDOWED
+		if _is_fullscreen()
+		else DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	)
 
 
 func _top_right_secondary_action() -> void:

@@ -4,6 +4,25 @@ extends RefCounted
 enum TerrainType { NONE, PLAIN, FOREST, MOUNTAIN, RIVER }
 enum DeityType { ATTACK, RESOURCE }
 
+const REWORKED_DEITY_FORM_NAMES := {
+	TerrainType.PLAIN: {
+		DeityType.ATTACK: "疾野神",
+		DeityType.RESOURCE: "盎然神",
+	},
+	TerrainType.MOUNTAIN: {
+		DeityType.ATTACK: "轰爆神",
+		DeityType.RESOURCE: "泞滞神",
+	},
+	TerrainType.RIVER: {
+		DeityType.ATTACK: "澜沧神",
+		DeityType.RESOURCE: "漩涡神",
+	},
+	TerrainType.FOREST: {
+		DeityType.ATTACK: "蛊郁神",
+		DeityType.RESOURCE: "丰饶神",
+	},
+}
+
 const TERRAIN_NAMES := {
 	TerrainType.NONE: "虚空",
 	TerrainType.PLAIN: "平原",
@@ -96,13 +115,13 @@ const BALANCE := {
 	"attack_base_range": 2,
 	# 1级攻击神的基础攻击间隔（秒）。
 	"attack_base_interval": 1.35,
-	# 神域面积2至6格时，每增加一格增加的核心属性倍率。
+	# 已弃用：仅为兼容旧存档和旧UI键名保留，运行时不再读取。
 	"domain_area_step_to_six": 0.2,
 	# 神域超过6格后，每增加一格增加的核心属性倍率。
 	"domain_area_step_after_six": 0.05,
 
 	# ── 相邻神域共鸣 ───────────────────────────────────────────────
-	# 平原共鸣对基础攻击/生产间隔的乘数；0.82代表缩短18%。
+	# 以下旧共鸣数值均已弃用，仅为兼容旧数据保留。
 	"plain_resonance_interval_multiplier": 0.82,
 	# 山地共鸣给予攻击神的额外射程。
 	"mountain_resonance_range_bonus": 0.75,
@@ -175,9 +194,9 @@ const BALANCE := {
 	# 每增加一轮，敌人基础攻击增加的数值。
 	"enemy_attack_per_round": 0.12,
 	# 前期两个出怪预告开始之间的基础间隔。
-	"enemy_base_spawn_interval": 4.1,
+	"enemy_base_spawn_interval": 3.2,
 	# 无论难度多高，出怪间隔都不会低于该值。
-	"enemy_min_spawn_interval": 0.75,
+	"enemy_min_spawn_interval": 0.6,
 	# 每轮使生成间隔减少的比例。
 	"enemy_spawn_round_scale": 0.07,
 	# 地图填充率对生成间隔的最大压缩比例。
@@ -186,13 +205,95 @@ const BALANCE := {
 	"enemy_move_interval": 0.72,
 
 	# ── 敌人寻路代价 ───────────────────────────────────────────────
-	# 数值越低越偏好；山地未列入字典，因为代码直接判定为不可通行。
+	# 除山地外全部等权；山地未列入字典，因为代码直接判定为不可通行。
 	"terrain_path_cost": {
 		TerrainType.NONE: 1.0,
-		TerrainType.PLAIN: 0.8,
-		TerrainType.FOREST: 1.4,
-		TerrainType.RIVER: 2.2,
+		TerrainType.PLAIN: 1.0,
+		TerrainType.FOREST: 1.0,
+		TerrainType.RIVER: 1.0,
 	},
+	# 敌人站在平原上时，受到的所有伤害倍率。
+	"plain_exposure_damage_multiplier": 1.25,
+	# 河流横向冲送的最远搜索距离与跨河流防循环冷却。
+	"river_push_search_limit": 11,
+	"river_trigger_cooldown": 0.8,
+	# 森林混乱持续时间及最多随机移动格数。
+	"forest_confusion_duration": 4.0,
+	"forest_confusion_max_steps": 6,
+	"forest_boss_confusion_multiplier": 0.55,
+
+	# ── 最终版八神技能 ─────────────────────────────────────────────
+	# 疾野神连续锁定同一目标的伤害、攻速叠层。
+	"swift_shot_damage_stack": 0.18,
+	"swift_shot_damage_max_stacks": 5,
+	"swift_shot_speed_stack": 0.08,
+	"swift_shot_speed_max_stacks": 5,
+	"swift_shot_stack_timeout": 1.8,
+	"swift_shot_first_hit_multiplier": 3.0,
+	"swift_shot_first_hit_cooldown": 4.0,
+	"swift_shot_interval_multiplier": 0.62,
+	"bombard_interval_multiplier": 1.55,
+	"bombard_damage_multiplier": 1.65,
+	"stagnation_interval_multiplier": 1.05,
+	"stagnation_damage_multiplier": 0.65,
+	"poison_attack_interval_multiplier": 1.1,
+	"poison_direct_damage_multiplier": 0.6,
+	# 盎然神治疗、护盾、治疗光环和减伤。
+	"vitality_heal_base": 2.0,
+	"vitality_shield_ratio": 0.18,
+	"vitality_heal_aura_ratio": 0.35,
+	"vitality_damage_reduction": 0.2,
+	"vitality_buff_duration": 3.0,
+	# 轰爆神与澜沧神的范围、弹射参数。
+	"bombard_base_splash_radius": 1,
+	"bombard_neighbor_radius_bonus": 1,
+	"shard_base_damage_multiplier": 0.65,
+	"shard_base_chain_count": 2,
+	"shard_base_chain_range": 2,
+	"shard_plain_chain_range_bonus": 2,
+	"shard_river_split_targets": 1,
+	"shard_forest_chain_bonus": 2,
+	# 泞滞神。
+	"stagnation_slow_duration": 2.0,
+	"stagnation_slow_multiplier": 1.45,
+	"stagnation_heavy_slow_multiplier": 1.8,
+	"stagnation_max_stacks": 3,
+	"stagnation_freeze_duration": 0.65,
+	"stagnation_vulnerable_multiplier": 1.25,
+	"stagnation_vulnerable_duration": 2.2,
+	# 漩涡神。
+	"vortex_range": 3,
+	"vortex_charm_chance": 0.25,
+	"vortex_charm_duration": 2.0,
+	"vortex_knockback_chance": 0.35,
+	"vortex_silence_chance": 0.35,
+	"vortex_silence_duration": 2.0,
+	# 蛊郁神中毒。
+	"poison_duration": 4.0,
+	"poison_tick_interval": 1.0,
+	"poison_damage_per_stack": 1.0,
+	"poison_max_stacks": 4,
+	"poison_mountain_damage_multiplier": 1.5,
+	"poison_spread_targets": 2,
+	"poison_spread_range": 2,
+	"poison_spread_stacks": 1,
+	# 丰饶神利息、避世和免费刷新。
+	"abundance_interest_unit": 5.0,
+	"abundance_interest_gain": 1.0,
+	"abundance_interest_resource_cap": 15.0,
+	"abundance_interest_max_gain": 3.0,
+	"abundance_free_refresh_chance": 0.3,
+	"abundance_free_refresh_cap": 3,
+	# 大型神域主动技能。
+	"large_domain_threshold": 6,
+	"plain_large_skill_duration": 6.0,
+	"mountain_large_skill_duration": 5.0,
+	"river_large_skill_duration": 0.9,
+	"river_large_skill_damage_ratio_elite": 0.55,
+	"river_large_skill_damage_ratio_boss": 0.25,
+	"forest_large_skill_duration": 4.0,
+	# 兼容旧键名：现在表示大型森林技能按神域面积换算随机移动步数的倍率。
+	"forest_large_skill_round_trips": 1,
 
 	# ── 敌方核心与阶段激活 ─────────────────────────────────────────
 	# 每座敌方核心的最大生命。
@@ -210,7 +311,8 @@ const BALANCE := {
 	# 每张地图固定放置的敌方核心数量。
 	"map_enemy_core_count": {1: 4, 2: 5, 3: 6, 4: 7, 5: 8, 6: 8},
 	# 每张地图要求激活的地形锚点数量。
-	"map_anchor_count": {1: 0, 2: 2, 3: 3, 4: 4, 5: 4, 6: 4},
+	# 每关锚点数量；允许直接调整。后续关卡显著增加锚点密度。
+	"map_anchor_count": {1: 0, 2: 2, 3: 4, 4: 6, 5: 8, 6: 10},
 	# 每摧毁一座敌方核心后，剩余核心生成间隔增加的比例。
 	"enemy_core_pressure_reduction": 0.07,
 
@@ -225,14 +327,28 @@ const BALANCE := {
 	"enemy_mid_attack_multiplier": 1.2,
 	"enemy_late_attack_multiplier": 1.55,
 	# 中期/后期生成间隔倍率；越小生成越快。
-	"enemy_mid_spawn_multiplier": 0.82,
-	"enemy_late_spawn_multiplier": 0.58,
+	"enemy_mid_spawn_multiplier": 0.72,
+	"enemy_late_spawn_multiplier": 0.48,
 	# 快速型敌人的速度与生命倍率。
 	"enemy_swift_speed_multiplier": 0.72,
 	"enemy_swift_hp_multiplier": 0.78,
 	# 重装型敌人的速度与生命倍率。
 	"enemy_brute_speed_multiplier": 1.28,
 	"enemy_brute_hp_multiplier": 1.65,
+	# 敌人类型权重：普通、快速、重甲、远程、飞行、游泳、穿林。权重越高越常见。
+	"enemy_type_weights_early": {"normal": 70, "swift": 18, "brute": 12},
+	"enemy_type_weights_mid": {"normal": 34, "swift": 16, "brute": 16, "ranged": 14, "swimmer": 10, "forester": 10},
+	"enemy_type_weights_late": {"normal": 22, "swift": 12, "brute": 16, "ranged": 16, "flying": 12, "swimmer": 11, "forester": 11},
+	# 远程敌人的攻击距离；飞行敌人可越过山地；游泳/穿林敌人分别降低河流/森林代价。
+	"enemy_ranged_attack_range": 2,
+	"enemy_ranged_hp_multiplier": 0.9,
+	"enemy_ranged_attack_multiplier": 1.15,
+	"enemy_flying_speed_multiplier": 0.86,
+	"enemy_flying_hp_multiplier": 0.72,
+	"enemy_swimmer_speed_multiplier": 0.82,
+	"enemy_swimmer_hp_multiplier": 0.95,
+	"enemy_forester_speed_multiplier": 0.88,
+	"enemy_forester_hp_multiplier": 0.95,
 
 	# ── 第二张地图额外难度 ─────────────────────────────────────────
 	# 第二图敌人生命、攻击与生成速度的整体倍率。
@@ -275,10 +391,6 @@ const BLESSINGS := {
 	"initial_resource": {"title": "丰饶余烬", "description": "第二张地图初始神力 +3。", "initial_resource": 3.0},
 	# 进入下一图时，中央核心最大生命和当前生命都额外增加8。
 	"core_health": {"title": "不灭核心", "description": "核心最大生命 +8。", "core_max_hp": 8.0},
-	# 本张地图第一座攻击神的最终建造费用减少2，最低不会低于0。
-	"first_attack_discount": {"title": "锋芒初显", "description": "第一座攻击神祇费用降低 2。", "first_attack_discount": 2.0},
-	# 本张地图第一座资源神的最终建造费用减少1.5。
-	"first_resource_discount": {"title": "丰收先声", "description": "第一座资源神祇费用降低 1.5。", "first_resource_discount": 1.5},
 	# 每次进入建设阶段时至少补充1次免费刷新机会。
 	"free_refresh": {"title": "商旅眷顾", "description": "每个建设阶段第一次刷新免费。", "build_free_refresh": 1.0},
 	# 所有升级费用乘以0.75；与基础配置中的升级折扣采用同一比例语义。
@@ -287,10 +399,6 @@ const BLESSINGS := {
 	"pollution_limit": {"title": "坚韧大地", "description": "所有格子的污染上限 +1。", "pollution_limit": 1.0},
 	# 下一张地图开局自动获得一张随机地形的两格免费地块。
 	"random_domino": {"title": "塑界赠礼", "description": "第二张地图开局获得一张随机两格地块。", "random_domino": 1.0},
-	# 所有攻击神在等级和共鸣倍率计算前，基础最大生命额外增加3。
-	"attack_health": {"title": "战神护佑", "description": "攻击神祇基础生命提高 3。", "attack_hp": 3.0},
-	# 所有资源神最终生产间隔再缩短10%。
-	"resource_speed": {"title": "丰饶脉动", "description": "资源神祇生产间隔缩短 10%。", "resource_speed": 0.1},
 }
 
 const ACHIEVEMENTS := {

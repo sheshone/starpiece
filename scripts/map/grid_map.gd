@@ -50,9 +50,14 @@ var completion_emitted: bool = false
 var enemy_death_sfx_step: int = 0
 var enemy_cores: Dictionary = {}
 var enemy_core_activation_order: Array[int] = []
+var enemy_core_forced_active_count: int = 0
 var pending_spawn_core := Vector2i(-1, -1)
 var spawn_warning_time: float = 0.0
 var spawn_warning_sequence: int = 0
+var first_hit_cooldowns: Dictionary = {}
+var temporary_terrain: Dictionary = {}
+var temporary_terrain_time: float = 0.0
+var combat_interest_paid: bool = false
 
 const ENEMY_CORE_POSITIONS: Array[Vector2i] = [
 	Vector2i(0, 0),
@@ -114,8 +119,12 @@ func _setup_enemy_cores() -> void:
 		enemy_core_activation_order.append(index)
 	enemy_core_activation_order.shuffle()
 	var initial_active := int(GameDefinitions.BALANCE.enemy_core_initial_active)
+	enemy_core_forced_active_count = initial_active
 	for index in selected_indices:
 		var pos := ENEMY_CORE_POSITIONS[index]
+		var cell := get_cell(pos)
+		cell.terrain = GameDefinitions.TerrainType.NONE
+		cell.piece_id = -1
 		enemy_cores[pos] = {
 			"hp": int(GameDefinitions.BALANCE.enemy_core_hp),
 			"max_hp": int(GameDefinitions.BALANCE.enemy_core_hp),
@@ -128,6 +137,10 @@ func is_enemy_core(pos: Vector2i) -> bool:
 	if not enemy_cores.has(pos):
 		return false
 	return int((enemy_cores[pos] as Dictionary).get("hp", 0)) > 0
+
+
+func is_enemy_core_slot(pos: Vector2i) -> bool:
+	return enemy_cores.has(pos)
 
 
 func living_enemy_core_count() -> int:
@@ -150,6 +163,10 @@ func reset_combat_timers() -> void:
 		var deity := cell.deity as DeityInstance
 		if deity:
 			deity.action_timer = minf(deity.action_timer, 0.5)
+			deity.large_skill_used = false
+			deity.large_skill_time = 0.0
+			deity.combat_interest_base = ResourceManager.divine_power
+	combat_interest_paid = false
 
 
 func reset_enemy_death_sfx_sequence() -> void:
@@ -170,6 +187,62 @@ func get_cell(pos: Vector2i) -> GridCellData:
 	return cells[index_of(pos)]
 
 
+func _enemies_at(pos: Vector2i) -> Array[EnemyInstance]:
+	var result: Array[EnemyInstance] = []
+	var cell := get_cell(pos)
+	if not cell:
+		return result
+	var front := cell.enemy as EnemyInstance
+	if front:
+		result.append(front)
+	for stacked in cell.enemy_stack:
+		var enemy := stacked as EnemyInstance
+		if enemy:
+			result.append(enemy)
+	return result
+
+
+func _add_enemy_to_cell(pos: Vector2i, enemy: EnemyInstance) -> void:
+	var cell := get_cell(pos)
+	if not cell.enemy:
+		cell.enemy = enemy
+	else:
+		cell.enemy_stack.append(enemy)
+
+
+func _remove_enemy_from_cell(pos: Vector2i, enemy: EnemyInstance) -> void:
+	var cell := get_cell(pos)
+	if cell.enemy == enemy:
+		cell.enemy = null
+		while not cell.enemy_stack.is_empty() and not cell.enemy:
+			var promoted := cell.enemy_stack.pop_front() as EnemyInstance
+			if promoted:
+				cell.enemy = promoted
+	else:
+		cell.enemy_stack.erase(enemy)
+
+
+func _cell_has_enemy(pos: Vector2i, enemy: EnemyInstance) -> bool:
+	return enemy in _enemies_at(pos)
+
+
+func _find_enemy_position(enemy: EnemyInstance) -> Vector2i:
+	for entry in _all_enemy_entries():
+		if entry.get("enemy") == enemy:
+			return Vector2i(entry.get("pos", Vector2i(-1, -1)))
+	return Vector2i(-1, -1)
+
+
+func _all_enemy_entries() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for y in range(GRID_H):
+		for x in range(GRID_W):
+			var pos := Vector2i(x, y)
+			for enemy in _enemies_at(pos):
+				result.append({"pos": pos, "enemy": enemy})
+	return result
+
+
 func neighbors(pos: Vector2i) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	for offset in ORTHOGONAL:
@@ -184,8 +257,6 @@ func terrain_region(start: Vector2i) -> Array[Vector2i]:
 	if not is_in_bounds(start):
 		return result
 	var terrain := get_cell(start).terrain
-	if terrain == GameDefinitions.TerrainType.NONE:
-		return result
 	var frontier: Array[Vector2i] = [start]
 	var visited: Dictionary = {start: true}
 	while not frontier.is_empty():
@@ -258,6 +329,8 @@ func world_to_grid(pos: Vector2) -> Vector2i:
 
 func begin_terrain_placement(card: TerrainCard) -> void:
 	clear_preview()
+	selected_pos = Vector2i(-1, -1)
+	selection_cleared.emit()
 	preview_terrain = card
 	preview_pos = core_pos + Vector2i.RIGHT
 	preview_route_cache_key = ""
@@ -271,7 +344,7 @@ func can_place_terrain(card: TerrainCard, anchor: Vector2i, rotation: int) -> bo
 	var touches_map := false
 	for offset in card.rotated_shape(rotation):
 		var pos := anchor + offset
-		if not is_in_bounds(pos) or pos == core_pos or is_enemy_core(pos):
+		if not is_in_bounds(pos) or pos == core_pos or is_enemy_core_slot(pos):
 			return false
 		var cell := get_cell(pos)
 		if (
@@ -348,6 +421,12 @@ func _setup_anchors() -> void:
 		{"pos": Vector2i(8, 2), "terrain": GameDefinitions.TerrainType.MOUNTAIN},
 		{"pos": Vector2i(2, 8), "terrain": GameDefinitions.TerrainType.RIVER},
 		{"pos": Vector2i(8, 8), "terrain": GameDefinitions.TerrainType.FOREST},
+		{"pos": Vector2i(5, 2), "terrain": GameDefinitions.TerrainType.RIVER},
+		{"pos": Vector2i(5, 8), "terrain": GameDefinitions.TerrainType.PLAIN},
+		{"pos": Vector2i(2, 5), "terrain": GameDefinitions.TerrainType.FOREST},
+		{"pos": Vector2i(8, 5), "terrain": GameDefinitions.TerrainType.MOUNTAIN},
+		{"pos": Vector2i(3, 3), "terrain": GameDefinitions.TerrainType.MOUNTAIN},
+		{"pos": Vector2i(7, 7), "terrain": GameDefinitions.TerrainType.RIVER},
 	]
 	for index in range(required_anchor_count()):
 		var anchor: Dictionary = anchors[index]
@@ -359,7 +438,7 @@ func _setup_anchors() -> void:
 
 func required_anchor_count() -> int:
 	var counts: Dictionary = GameDefinitions.BALANCE.map_anchor_count
-	return clampi(int(counts.get(ProgressManager.current_map, 0)), 0, 4)
+	return clampi(int(counts.get(ProgressManager.current_map, 0)), 0, 10)
 
 
 func _activate_anchor_if_needed(pos: Vector2i) -> void:
@@ -419,7 +498,7 @@ func deity_form_name(pos: Vector2i, deity_type: int) -> String:
 	var cell := get_cell(pos)
 	if not cell or cell.terrain == GameDefinitions.TerrainType.NONE:
 		return GameDefinitions.DEITY_NAMES[deity_type]
-	var forms: Dictionary = GameDefinitions.DEITY_FORM_NAMES.get(cell.terrain, {})
+	var forms: Dictionary = GameDefinitions.REWORKED_DEITY_FORM_NAMES.get(cell.terrain, {})
 	return str(forms.get(deity_type, GameDefinitions.DEITY_NAMES[deity_type]))
 
 
@@ -577,12 +656,9 @@ func surrounding_terrain_counts(pos: Vector2i) -> Dictionary:
 	return counts
 
 
-func domain_area_multiplier(area: int) -> float:
-	if area <= 1:
-		return 1.0
-	if area <= 6:
-		return 1.0 + float(area - 1) * float(GameDefinitions.BALANCE.domain_area_step_to_six)
-	return 2.0 + float(area - 6) * float(GameDefinitions.BALANCE.domain_area_step_after_six)
+func domain_area_multiplier(_area: int) -> float:
+	# 最终规则保留该接口供旧UI读取，但神域面积不再提供普通属性倍率。
+	return 1.0
 
 
 func deity_domain_context(pos: Vector2i) -> Dictionary:
@@ -607,15 +683,13 @@ func deity_domain_context(pos: Vector2i) -> Dictionary:
 			if visited_regions.has(region_key):
 				continue
 			visited_regions[region_key] = true
-			var provider_pos := region_deity_position(adjacent)
-			if provider_pos == Vector2i(-1, -1):
-				continue
-			var provider := get_cell(provider_pos).deity as DeityInstance
-			if not provider:
-				continue
-			adjacent_deities.append(provider_pos)
-			if region.size() >= 2:
+			if adjacent_cell.terrain != get_cell(pos).terrain:
 				resonances[adjacent_cell.terrain] = true
+			var provider_pos := region_deity_position(adjacent)
+			if provider_pos != Vector2i(-1, -1):
+				var provider := get_cell(provider_pos).deity as DeityInstance
+				if provider:
+					adjacent_deities.append(provider_pos)
 	return {
 		"area": own_region.size(),
 		"area_multiplier": domain_area_multiplier(own_region.size()),
@@ -631,7 +705,7 @@ func deity_stats(pos: Vector2i) -> Dictionary:
 		return {}
 	var context := deity_domain_context(pos)
 	var resonances: Dictionary = context.resonances
-	var area_multiplier := float(context.area_multiplier)
+	var area_multiplier := 1.0
 	var level_damage: Dictionary = GameDefinitions.BALANCE.deity_level_damage_multiplier
 	var level_amount: Dictionary = GameDefinitions.BALANCE.deity_level_amount_multiplier
 	var level_hp: Dictionary = GameDefinitions.BALANCE.deity_level_hp_multiplier
@@ -654,16 +728,6 @@ func deity_stats(pos: Vector2i) -> Dictionary:
 		"damage_reduction": 0.0,
 	}
 	if deity.deity_type == GameDefinitions.DeityType.ATTACK:
-		result.max_hp += roundi(ProgressManager.blessing_value("attack_hp"))
-	if bool(resonances.get(GameDefinitions.TerrainType.FOREST, false)):
-		result.max_hp = roundi(float(result.max_hp) * float(GameDefinitions.BALANCE.forest_resonance_hp_multiplier))
-		result.heal_shield_multiplier = float(GameDefinitions.BALANCE.forest_resonance_heal_shield_multiplier)
-	if bool(resonances.get(GameDefinitions.TerrainType.RIVER, false)):
-		result.special_every = maxi(
-			1,
-			int(result.special_every) - int(GameDefinitions.BALANCE.river_resonance_trigger_reduction)
-		)
-	if deity.deity_type == GameDefinitions.DeityType.ATTACK:
 		result.range = (
 			float(GameDefinitions.BALANCE.attack_base_range)
 			+ float(level_range.get(deity.level, 0.0))
@@ -673,45 +737,59 @@ func deity_stats(pos: Vector2i) -> Dictionary:
 				GameDefinitions.BALANCE.mountain_deity_level_range_bonus
 			)
 			result.range += float(mountain_level_range.get(deity.level, 0.0))
-		if bool(resonances.get(GameDefinitions.TerrainType.MOUNTAIN, false)):
-			result.range += float(GameDefinitions.BALANCE.mountain_resonance_range_bonus)
 		result.interval = (
 			float(GameDefinitions.BALANCE.attack_base_interval)
 			* float(level_interval.get(deity.level, 1.0))
 		)
-		if bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false)):
-			result.interval *= float(GameDefinitions.BALANCE.plain_resonance_interval_multiplier)
+		result.damage = roundi(
+			float(GameDefinitions.BALANCE.attack_base_damage)
+			* float(level_damage.get(deity.level, 1.0))
+		)
+		match cell.terrain:
+			GameDefinitions.TerrainType.PLAIN:
+				result.interval *= float(GameDefinitions.BALANCE.swift_shot_interval_multiplier)
+			GameDefinitions.TerrainType.MOUNTAIN:
+				result.interval *= float(GameDefinitions.BALANCE.bombard_interval_multiplier)
+				result.damage = roundi(float(result.damage) * float(GameDefinitions.BALANCE.bombard_damage_multiplier))
+			GameDefinitions.TerrainType.RIVER:
+				result.damage = roundi(
+					float(result.damage)
+					* float(GameDefinitions.BALANCE.shard_base_damage_multiplier)
+				)
+			GameDefinitions.TerrainType.FOREST:
+				result.interval *= float(GameDefinitions.BALANCE.poison_attack_interval_multiplier)
+				result.damage = roundi(float(result.damage) * float(GameDefinitions.BALANCE.poison_direct_damage_multiplier))
 		result.interval = maxf(
 			float(GameDefinitions.BALANCE.minimum_attack_interval),
 			float(result.interval)
 		)
-		result.damage = roundi(
-			float(GameDefinitions.BALANCE.attack_base_damage)
-			* area_multiplier
-			* float(level_damage.get(deity.level, 1.0))
-		)
 	else:
 		result.amount = (
 			float(GameDefinitions.BALANCE.resource_base_amount)
-			* area_multiplier
 			* float(level_amount.get(deity.level, 1.0))
 		)
 		result.interval = (
 			float(GameDefinitions.BALANCE.resource_base_interval)
 			* float(level_interval.get(deity.level, 1.0))
 		)
+		result.range = (
+			float(GameDefinitions.BALANCE.resource_effect_range)
+			+ float(level_range.get(deity.level, 0.0))
+		)
 		if cell.terrain == GameDefinitions.TerrainType.PLAIN:
-			result.interval *= float(GameDefinitions.BALANCE.resource_plain_interval_multiplier)
+			result.amount = (
+				float(GameDefinitions.BALANCE.vitality_heal_base)
+				* float(level_amount.get(deity.level, 1.0))
+			)
 		elif cell.terrain == GameDefinitions.TerrainType.MOUNTAIN:
-			result.interval *= float(GameDefinitions.BALANCE.resource_mountain_interval_multiplier)
-			result.amount *= float(GameDefinitions.BALANCE.resource_mountain_base_amount_multiplier)
-		if bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false)):
-			result.interval *= float(GameDefinitions.BALANCE.plain_resonance_interval_multiplier)
-		if bool(resonances.get(GameDefinitions.TerrainType.MOUNTAIN, false)):
-			result.amount += float(GameDefinitions.BALANCE.mountain_resonance_resource_bonus)
+			result.amount = (
+				float(GameDefinitions.BALANCE.attack_base_damage)
+				* float(GameDefinitions.BALANCE.stagnation_damage_multiplier)
+				* float(level_damage.get(deity.level, 1.0))
+			)
+		elif cell.terrain == GameDefinitions.TerrainType.RIVER:
+			result.amount = 0.0
 		result.interval = maxf(0.5, float(result.interval))
-		if ProgressManager.blessing_value("resource_speed") > 0.0:
-			result.interval *= 1.0 - ProgressManager.blessing_value("resource_speed")
 	return result
 
 
@@ -799,6 +877,7 @@ func tick_combat(delta: float) -> void:
 			spawn_timer = _spawn_interval()
 	_tick_deities(delta)
 	_tick_enemies(delta)
+	_tick_large_domain_skills(delta)
 
 
 func has_pending_spawn() -> bool:
@@ -829,10 +908,28 @@ func _update_enemy_core_activation() -> void:
 		target_active = int(GameDefinitions.BALANCE.enemy_core_mid_active)
 	elif stage >= 2:
 		target_active = int(GameDefinitions.BALANCE.enemy_core_late_active)
+	target_active = maxi(target_active, enemy_core_forced_active_count)
 	for data in enemy_cores.values():
 		var core_data := data as Dictionary
 		var activation_rank := enemy_core_activation_order.find(int(core_data.index))
 		core_data.active = activation_rank >= 0 and activation_rank < target_active and int(core_data.hp) > 0
+
+
+func _activate_next_enemy_core_wave_if_needed() -> void:
+	var active_living := 0
+	for data in enemy_cores.values():
+		var core_data := data as Dictionary
+		if int(core_data.hp) > 0 and bool(core_data.active):
+			active_living += 1
+	if active_living > 0 or living_enemy_core_count() <= 0:
+		return
+	var wave_size := maxi(1, int(GameDefinitions.BALANCE.enemy_core_initial_active))
+	enemy_core_forced_active_count = mini(
+		enemy_cores.size(),
+		enemy_core_forced_active_count + wave_size
+	)
+	_update_enemy_core_activation()
+	prepare_build_spawn_warning()
 
 
 func _begin_spawn_warning() -> bool:
@@ -878,10 +975,10 @@ func _spawn_cell_for_core(enemy_core_pos: Vector2i) -> Vector2i:
 	if direction.x != 0 and direction.y != 0:
 		candidates.append(enemy_core_pos + direction)
 	for pos in candidates:
-		if not is_in_bounds(pos) or is_enemy_core(pos):
+		if not is_in_bounds(pos) or is_enemy_core_slot(pos):
 			continue
 		var cell := get_cell(pos)
-		if not cell.enemy and not cell.deity and cell.terrain != GameDefinitions.TerrainType.MOUNTAIN:
+		if not cell.deity and cell.terrain != GameDefinitions.TerrainType.MOUNTAIN:
 			return pos
 	return Vector2i(-1, -1)
 
@@ -904,26 +1001,63 @@ func _spawn_from_enemy_core(enemy_core_pos: Vector2i) -> bool:
 	if ProgressManager.current_map == 2:
 		hp_multiplier *= float(GameDefinitions.BALANCE.map_2_enemy_multiplier)
 		attack_multiplier *= float(GameDefinitions.BALANCE.map_2_enemy_multiplier)
-	if stage >= 1:
-		var archetype_roll := GameManager.rng.randf()
-		if archetype_roll < 0.24:
-			enemy.archetype = "swift"
+	_assign_enemy_archetype(enemy, stage)
+	match enemy.archetype:
+		"swift":
 			enemy.speed_multiplier = float(GameDefinitions.BALANCE.enemy_swift_speed_multiplier)
 			hp_multiplier *= float(GameDefinitions.BALANCE.enemy_swift_hp_multiplier)
-		elif archetype_roll > 0.78:
-			enemy.archetype = "brute"
+		"brute":
 			enemy.speed_multiplier = float(GameDefinitions.BALANCE.enemy_brute_speed_multiplier)
 			hp_multiplier *= float(GameDefinitions.BALANCE.enemy_brute_hp_multiplier)
+		"ranged":
+			enemy.attack_range = int(GameDefinitions.BALANCE.enemy_ranged_attack_range)
+			hp_multiplier *= float(GameDefinitions.BALANCE.enemy_ranged_hp_multiplier)
+			attack_multiplier *= float(GameDefinitions.BALANCE.enemy_ranged_attack_multiplier)
+		"flying":
+			enemy.terrain_profile = "flying"
+			enemy.speed_multiplier = float(GameDefinitions.BALANCE.enemy_flying_speed_multiplier)
+			hp_multiplier *= float(GameDefinitions.BALANCE.enemy_flying_hp_multiplier)
+		"swimmer":
+			enemy.terrain_profile = "swimmer"
+			enemy.speed_multiplier = float(GameDefinitions.BALANCE.enemy_swimmer_speed_multiplier)
+			hp_multiplier *= float(GameDefinitions.BALANCE.enemy_swimmer_hp_multiplier)
+		"forester":
+			enemy.terrain_profile = "forester"
+			enemy.speed_multiplier = float(GameDefinitions.BALANCE.enemy_forester_speed_multiplier)
+			hp_multiplier *= float(GameDefinitions.BALANCE.enemy_forester_hp_multiplier)
 	enemy.max_hp = maxi(1, roundi(float(enemy.max_hp) * hp_multiplier))
 	enemy.hp = enemy.max_hp
 	enemy.attack = maxi(1, roundi(float(enemy.attack) * attack_multiplier))
 	enemy.visual_from = Vector2(pos)
 	enemy.visual_to = Vector2(pos)
 	enemy.visual_progress = 1.0
-	cell.enemy = enemy
+	_add_enemy_to_cell(pos, enemy)
+	_apply_entered_terrain(enemy_core_pos, pos, enemy)
 	ProgressManager.add_stat("enemy_spawned")
 	board_changed.emit()
 	return true
+
+
+func _assign_enemy_archetype(enemy: EnemyInstance, stage: int) -> void:
+	var weights: Dictionary = GameDefinitions.BALANCE.enemy_type_weights_early
+	if stage == 1:
+		weights = GameDefinitions.BALANCE.enemy_type_weights_mid
+	elif stage >= 2:
+		weights = GameDefinitions.BALANCE.enemy_type_weights_late
+	var total := 0
+	for value in weights.values():
+		total += int(value)
+	if total <= 0:
+		enemy.archetype = "normal"
+		return
+	var roll := GameManager.rng.randi_range(1, total)
+	var accumulated := 0
+	for key in weights.keys():
+		accumulated += int(weights[key])
+		if roll <= accumulated:
+			enemy.archetype = str(key)
+			return
+	enemy.archetype = "normal"
 
 
 func _threat_stage() -> int:
@@ -947,6 +1081,10 @@ func _tick_deities(delta: float) -> void:
 			if not deity:
 				continue
 			_recalculate_deity(pos)
+			deity.target_idle_time += delta
+			if deity.target_idle_time >= float(GameDefinitions.BALANCE.swift_shot_stack_timeout):
+				deity.tracked_target = Vector2i(-1, -1)
+				deity.target_stacks = 0
 			deity.action_timer -= delta
 			if deity.action_timer > 0.0:
 				continue
@@ -961,11 +1099,15 @@ func _tick_deities(delta: float) -> void:
 
 func _attack_with_deity(pos: Vector2i, deity: DeityInstance, stats: Dictionary) -> void:
 	var terrain := get_cell(pos).terrain
-	var target := (
-		_farthest_enemy(pos, float(stats.range))
-		if terrain == GameDefinitions.TerrainType.MOUNTAIN
-		else _nearest_enemy(pos, float(stats.range))
-	)
+	var target := Vector2i(-1, -1)
+	if terrain == GameDefinitions.TerrainType.PLAIN and deity.large_skill_time > 0.0:
+		target = _nearest_enemy_from_region(pos, float(stats.range))
+	else:
+		target = (
+			_farthest_enemy(pos, float(stats.range))
+			if terrain == GameDefinitions.TerrainType.MOUNTAIN
+			else _nearest_enemy(pos, float(stats.range))
+		)
 	if target == Vector2i(-1, -1):
 		var core_target := _nearest_enemy_core(pos, float(stats.range))
 		if core_target != Vector2i(-1, -1):
@@ -974,34 +1116,76 @@ func _attack_with_deity(pos: Vector2i, deity: DeityInstance, stats: Dictionary) 
 		return
 	_play_deity_action_animation(deity, "attack", 0.5)
 	deity.attack_count += 1
-	var special := deity.attack_count % int(stats.special_every) == 0
-	var special_multiplier := float(stats.special_multiplier) if special else 1.0
 	AudioManager.play_sfx_first([
 		"attack_deity_%s" % AssetCatalog.terrain_suffix(terrain),
 		"attack",
 	], -3.0)
 	var effect_profile := "deity_%s" % AssetCatalog.terrain_suffix(terrain)
-	_damage_enemy(target, int(stats.damage), pos, Color("ffd76a"), effect_profile)
+	var context := deity_domain_context(pos)
+	var resonances: Dictionary = context.get("resonances", {})
+	var damage := int(stats.damage)
 	match terrain:
 		GameDefinitions.TerrainType.PLAIN:
-			if special:
-				_damage_enemy(
-					target,
-					maxi(1, roundi(float(stats.damage) * 0.7 * special_multiplier)),
-					pos,
-					Color("fff0a0"),
-					effect_profile
+			if deity.tracked_target == target:
+				deity.target_stacks += 1
+			else:
+				deity.tracked_target = target
+				deity.target_stacks = 0
+			deity.target_idle_time = 0.0
+			if bool(resonances.get(GameDefinitions.TerrainType.MOUNTAIN, false)):
+				damage = roundi(
+					float(damage)
+					* (
+						1.0
+						+ min(
+							deity.target_stacks,
+							int(GameDefinitions.BALANCE.swift_shot_damage_max_stacks)
+						)
+						* float(GameDefinitions.BALANCE.swift_shot_damage_stack)
+					)
 				)
+			if bool(resonances.get(GameDefinitions.TerrainType.FOREST, false)):
+				var enemy := get_cell(target).enemy as EnemyInstance
+				var enemy_id := enemy.get_instance_id() if enemy else 0
+				var last_hit := float(first_hit_cooldowns.get(enemy_id, -9999.0))
+				if pulse_time - last_hit >= float(GameDefinitions.BALANCE.swift_shot_first_hit_cooldown):
+					damage = roundi(
+						float(damage)
+						* float(GameDefinitions.BALANCE.swift_shot_first_hit_multiplier)
+					)
+					first_hit_cooldowns[enemy_id] = pulse_time
+			if bool(resonances.get(GameDefinitions.TerrainType.RIVER, false)):
+				var speed_stacks := mini(
+					deity.target_stacks,
+					int(GameDefinitions.BALANCE.swift_shot_speed_max_stacks)
+				)
+				deity.action_timer = maxf(
+					float(GameDefinitions.BALANCE.minimum_attack_interval),
+					float(stats.interval)
+					* (
+						1.0
+						- float(speed_stacks)
+						* float(GameDefinitions.BALANCE.swift_shot_speed_stack)
+					)
+				)
+			_damage_enemy(target, damage, pos, Color("ffd76a"), effect_profile)
 		GameDefinitions.TerrainType.MOUNTAIN:
-			var splash_damage := roundi(float(stats.damage) * 0.55)
-			if special:
-				splash_damage = roundi(
-					float(splash_damage)
-					* float(GameDefinitions.BALANCE.mountain_special_splash_multiplier)
-					* special_multiplier
-				)
+			_damage_enemy(target, damage, pos, Color("ffd76a"), effect_profile)
+			var neighbor_types := 0
+			for terrain_type in [
+				GameDefinitions.TerrainType.PLAIN,
+				GameDefinitions.TerrainType.RIVER,
+				GameDefinitions.TerrainType.FOREST,
+			]:
+				if bool(resonances.get(terrain_type, false)):
+					neighbor_types += 1
+			var splash_radius := (
+				int(GameDefinitions.BALANCE.bombard_base_splash_radius)
+				+ neighbor_types * int(GameDefinitions.BALANCE.bombard_neighbor_radius_bonus)
+			)
+			var splash_damage := roundi(float(damage) * 0.55)
 			for enemy_pos in get_all_enemy_positions():
-				if enemy_pos != target and _manhattan(enemy_pos, target) <= int(GameDefinitions.BALANCE.mountain_splash_radius):
+				if enemy_pos != target and _manhattan(enemy_pos, target) <= splash_radius:
 					_damage_enemy(
 						enemy_pos,
 						splash_damage,
@@ -1010,46 +1194,25 @@ func _attack_with_deity(pos: Vector2i, deity: DeityInstance, stats: Dictionary) 
 						"deity_mountain_splash"
 					)
 		GameDefinitions.TerrainType.RIVER:
-			var excluded: Array = [target]
-			var chain_source := target
-			var chain_count := 1
-			if special:
-				chain_count += int(GameDefinitions.BALANCE.river_special_extra_chains)
-			for _chain_index in range(chain_count):
-				var chain := _nearest_enemy(
-					chain_source,
-					float(GameDefinitions.BALANCE.river_chain_range),
-					excluded
-				)
-				if chain == Vector2i(-1, -1):
-					break
-				_damage_enemy(
-					chain,
-					maxi(1, roundi(float(stats.damage) * (0.75 if not special else special_multiplier))),
-					chain_source,
-					Color("70cfff"),
-					"deity_river_chain"
-				)
-				excluded.append(chain)
-				chain_source = chain
+			_river_ricochet_attack(pos, target, damage, stats, resonances)
 		GameDefinitions.TerrainType.FOREST:
-			var enemy := get_cell(target).enemy as EnemyInstance
-			if enemy:
-				var duration := float(GameDefinitions.BALANCE.forest_slow_duration)
-				if special:
-					duration += (
-						float(GameDefinitions.BALANCE.forest_special_slow_duration)
-						* special_multiplier
-					)
-				enemy.slow_timer = maxf(enemy.slow_timer, duration)
-				_spawn_catalog_effect("status_deity_forest_slow", target, 0.6)
-			if special:
-				_heal_deity(
-					pos,
-					float(deity.max_hp)
-					* float(GameDefinitions.BALANCE.forest_special_self_heal_ratio)
-					* special_multiplier
+			_damage_enemy(target, maxi(1, roundi(float(damage) * 0.55)), pos, Color("8bd36c"), effect_profile)
+			var poisoned := get_cell(target).enemy as EnemyInstance
+			if poisoned:
+				var max_stacks := (
+					int(GameDefinitions.BALANCE.poison_max_stacks)
+					if bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false))
+					else 1
 				)
+				poisoned.poison_stacks = mini(max_stacks, poisoned.poison_stacks + 1)
+				poisoned.poison_time = float(GameDefinitions.BALANCE.poison_duration)
+				poisoned.poison_tick_timer = float(GameDefinitions.BALANCE.poison_tick_interval)
+				poisoned.poison_damage_multiplier = (
+					float(GameDefinitions.BALANCE.poison_mountain_damage_multiplier)
+					if bool(resonances.get(GameDefinitions.TerrainType.MOUNTAIN, false))
+					else 1.0
+				)
+				poisoned.poison_spreads = bool(resonances.get(GameDefinitions.TerrainType.RIVER, false))
 
 
 func _farthest_enemy(origin: Vector2i, max_range: float) -> Vector2i:
@@ -1079,7 +1242,11 @@ func _nearest_enemy_core(origin: Vector2i, max_range: float) -> Vector2i:
 	var best_distance := INF
 	for pos in enemy_cores:
 		var data: Dictionary = enemy_cores[pos]
-		if int(data.hp) <= 0 or not bool(data.active):
+		if (
+			int(data.hp) <= 0
+			or not bool(data.active)
+			or not _enemy_core_is_surrounded_by_terrain(pos)
+		):
 			continue
 		var distance := float(_manhattan(origin, pos))
 		if (
@@ -1091,9 +1258,26 @@ func _nearest_enemy_core(origin: Vector2i, max_range: float) -> Vector2i:
 	return best
 
 
+func _enemy_core_is_surrounded_by_terrain(pos: Vector2i) -> bool:
+	var checked := 0
+	for adjacent in neighbors(pos):
+		if adjacent == core_pos or is_enemy_core_slot(adjacent):
+			continue
+		checked += 1
+		var cell := get_cell(adjacent)
+		if not cell:
+			return false
+	return checked > 0
+
+
 func _attack_enemy_core(source: Vector2i, target: Vector2i, damage: int) -> void:
 	var data: Dictionary = enemy_cores.get(target, {})
-	if data.is_empty() or int(data.hp) <= 0 or not bool(data.active):
+	if (
+		data.is_empty()
+		or int(data.hp) <= 0
+		or not bool(data.active)
+		or not _enemy_core_is_surrounded_by_terrain(target)
+	):
 		return
 	var terrain := get_cell(source).terrain
 	var profile := "deity_%s" % AssetCatalog.terrain_suffix(terrain)
@@ -1112,6 +1296,7 @@ func _attack_enemy_core(source: Vector2i, target: Vector2i, damage: int) -> void
 			"敌方核心已摧毁：该方向停止出怪，获得 %.1f 神力"
 			% float(GameDefinitions.BALANCE.enemy_core_reward)
 		)
+		_activate_next_enemy_core_wave_if_needed()
 	board_changed.emit()
 	queue_redraw()
 	_check_victory()
@@ -1119,35 +1304,200 @@ func _attack_enemy_core(source: Vector2i, target: Vector2i, damage: int) -> void
 
 func _produce_with_deity(pos: Vector2i, deity: DeityInstance, stats: Dictionary) -> void:
 	_play_deity_action_animation(deity, "produce", 0.65)
-	var produced := float(stats.amount)
-	ResourceManager.add_divine_power(produced)
-	ProgressManager.add_stat("resource_income_round", produced)
-	ProgressManager.add_stat("resource_income_total", produced)
 	var terrain := get_cell(pos).terrain
 	AudioManager.play_sfx_first([
 		"produce_deity_%s" % AssetCatalog.terrain_suffix(terrain),
 		"resource_produce",
 	], -5.0)
 	deity.production_count += 1
-	if deity.production_count % int(stats.special_every) != 0:
-		return
-	var special_multiplier := float(stats.special_multiplier)
 	match terrain:
 		GameDefinitions.TerrainType.PLAIN:
-			var bonus := produced * special_multiplier
-			ResourceManager.add_divine_power(bonus)
-			ProgressManager.add_stat("resource_income_round", bonus)
-			ProgressManager.add_stat("resource_income_total", bonus)
+			_vitality_heal(pos, deity, stats)
 		GameDefinitions.TerrainType.MOUNTAIN:
-			var bonus := produced * 0.5 * special_multiplier
-			ResourceManager.add_divine_power(bonus)
-			ProgressManager.add_stat("resource_income_round", bonus)
-			ProgressManager.add_stat("resource_income_total", bonus)
+			_stagnation_cast(pos, stats)
 		GameDefinitions.TerrainType.RIVER:
-			if GameManager.scene_root and GameManager.scene_root.has_method("grant_free_refresh"):
-				GameManager.scene_root.grant_free_refresh()
+			_vortex_cast(pos, stats)
 		GameDefinitions.TerrainType.FOREST:
-			_forest_life_bloom(pos, special_multiplier)
+			var produced := float(stats.amount)
+			ResourceManager.add_divine_power(produced)
+			ProgressManager.add_stat("resource_income_round", produced)
+			ProgressManager.add_stat("resource_income_total", produced)
+			var context := deity_domain_context(pos)
+			var resonances: Dictionary = context.get("resonances", {})
+			if (
+				bool(resonances.get(GameDefinitions.TerrainType.RIVER, false))
+				and GameManager.scene_root
+				and GameManager.scene_root.has_method("grant_free_refresh")
+				and GameManager.rng.randf() <= float(GameDefinitions.BALANCE.abundance_free_refresh_chance)
+				and int(GameManager.scene_root.free_refreshes)
+					< int(GameDefinitions.BALANCE.abundance_free_refresh_cap)
+			):
+				GameManager.scene_root.grant_free_refresh()
+
+
+func _vitality_heal(pos: Vector2i, _deity: DeityInstance, stats: Dictionary) -> void:
+	var target := Vector2i(-1, -1)
+	var lowest_ratio := 2.0
+	for candidate in get_all_deity_positions():
+		if (
+			_deity.large_skill_time <= 0.0
+			and float(_manhattan(pos, candidate)) > float(stats.range)
+		):
+			continue
+		if (
+			_deity.large_skill_time > 0.0
+			and not _position_in_range_of_region(candidate, terrain_region(pos), float(stats.range))
+		):
+			continue
+		var candidate_deity := get_cell(candidate).deity as DeityInstance
+		if not candidate_deity or candidate_deity.hp >= candidate_deity.max_hp:
+			continue
+		var ratio := float(candidate_deity.hp) / float(maxi(1, candidate_deity.max_hp))
+		if ratio < lowest_ratio:
+			lowest_ratio = ratio
+			target = candidate
+	if target == Vector2i(-1, -1):
+		return
+	_heal_deity(target, float(stats.amount))
+	var resonances: Dictionary = deity_domain_context(pos).get("resonances", {})
+	var healed := get_cell(target).deity as DeityInstance
+	if bool(resonances.get(GameDefinitions.TerrainType.MOUNTAIN, false)) and healed:
+		healed.shield = minf(
+			float(healed.max_hp) * float(GameDefinitions.BALANCE.vitality_shield_ratio),
+			healed.shield + float(stats.amount)
+		)
+	if bool(resonances.get(GameDefinitions.TerrainType.RIVER, false)):
+		for nearby in get_all_deity_positions():
+			if nearby != target and _manhattan(nearby, target) <= 1:
+				_heal_deity(
+					nearby,
+					float(stats.amount) * float(GameDefinitions.BALANCE.vitality_heal_aura_ratio)
+				)
+	if bool(resonances.get(GameDefinitions.TerrainType.FOREST, false)) and healed:
+		healed.set_meta("damage_reduction_until", pulse_time + float(GameDefinitions.BALANCE.vitality_buff_duration))
+
+
+func _river_ricochet_attack(
+	pos: Vector2i,
+	target: Vector2i,
+	damage: int,
+	stats: Dictionary,
+	resonances: Dictionary
+) -> void:
+	var chain_range := int(GameDefinitions.BALANCE.shard_base_chain_range)
+	if bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false)):
+		chain_range += int(GameDefinitions.BALANCE.shard_plain_chain_range_bonus)
+	var chain_count := int(GameDefinitions.BALANCE.shard_base_chain_count)
+	if bool(resonances.get(GameDefinitions.TerrainType.FOREST, false)):
+		chain_count += int(GameDefinitions.BALANCE.shard_forest_chain_bonus)
+	var split_count := (
+		1 + int(GameDefinitions.BALANCE.shard_river_split_targets)
+		if bool(resonances.get(GameDefinitions.TerrainType.MOUNTAIN, false))
+		else 1
+	)
+	var frontier: Array[Vector2i] = [target]
+	var hit: Array = []
+	for _step in range(chain_count):
+		var next_frontier: Array[Vector2i] = []
+		for source in frontier:
+			if source not in hit:
+				_damage_enemy(
+					source,
+					maxi(1, damage),
+					pos,
+					Color("70cfff"),
+					"deity_river_chain"
+				)
+				hit.append(source)
+			for _branch in range(split_count):
+				var next := _nearest_enemy(source, float(chain_range), hit + next_frontier)
+				if next != Vector2i(-1, -1):
+					next_frontier.append(next)
+		frontier = next_frontier
+		if frontier.is_empty():
+			break
+
+
+func _stagnation_cast(pos: Vector2i, stats: Dictionary) -> void:
+	var target := _nearest_enemy(pos, float(stats.range))
+	if target == Vector2i(-1, -1):
+		return
+	_damage_enemy(
+		target,
+		maxi(1, roundi(float(stats.amount))),
+		pos,
+		Color("b9d6de"),
+		"deity_mountain_splash"
+	)
+	var slowed := get_cell(target).enemy as EnemyInstance
+	if not slowed:
+		return
+	var resonances: Dictionary = deity_domain_context(pos).get("resonances", {})
+	slowed.slow_timer = float(GameDefinitions.BALANCE.stagnation_slow_duration)
+	slowed.slow_strength_multiplier = (
+		float(GameDefinitions.BALANCE.stagnation_heavy_slow_multiplier)
+		if bool(resonances.get(GameDefinitions.TerrainType.RIVER, false))
+		else float(GameDefinitions.BALANCE.stagnation_slow_multiplier)
+	)
+	slowed.slow_stacks = (
+		mini(
+			slowed.slow_stacks + 1,
+			int(GameDefinitions.BALANCE.stagnation_max_stacks)
+		)
+		if bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false))
+		else 1
+	)
+	if (
+		bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false))
+		and slowed.slow_stacks >= int(GameDefinitions.BALANCE.stagnation_max_stacks)
+	):
+		slowed.freeze_time = float(GameDefinitions.BALANCE.stagnation_freeze_duration)
+		slowed.slow_stacks = 0
+	if bool(resonances.get(GameDefinitions.TerrainType.FOREST, false)):
+		slowed.vulnerable_time = float(GameDefinitions.BALANCE.stagnation_vulnerable_duration)
+	_spawn_catalog_effect("status_deity_forest_slow", target, 0.6)
+
+
+func _vortex_cast(pos: Vector2i, stats: Dictionary) -> void:
+	var resonances: Dictionary = deity_domain_context(pos).get("resonances", {})
+	for enemy_pos in get_all_enemy_positions():
+		if float(_manhattan(pos, enemy_pos)) > float(stats.range):
+			continue
+		var enemy := get_cell(enemy_pos).enemy as EnemyInstance
+		if not enemy:
+			continue
+		var direction := Vector2i(signi(pos.x - enemy_pos.x), signi(pos.y - enemy_pos.y))
+		var pull_directions: Array[Vector2i] = [
+			Vector2i(direction.x, 0),
+			Vector2i(0, direction.y),
+		]
+		for pull_direction in pull_directions:
+			var target := _forced_move_with_bounce(
+				enemy_pos,
+				pull_direction,
+				enemy,
+				"vortex"
+			)
+			if target != enemy_pos:
+				enemy_pos = target
+				break
+		if (
+			bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false))
+			and enemy.archetype == "normal"
+			and GameManager.rng.randf() <= float(GameDefinitions.BALANCE.vortex_charm_chance)
+		):
+			enemy.charmed_time = float(GameDefinitions.BALANCE.vortex_charm_duration)
+		if (
+			bool(resonances.get(GameDefinitions.TerrainType.FOREST, false))
+			and GameManager.rng.randf() <= float(GameDefinitions.BALANCE.vortex_silence_chance)
+		):
+			enemy.silence_time = float(GameDefinitions.BALANCE.vortex_silence_duration)
+		if (
+			bool(resonances.get(GameDefinitions.TerrainType.MOUNTAIN, false))
+			and GameManager.rng.randf() <= float(GameDefinitions.BALANCE.vortex_knockback_chance)
+		):
+			var away := Vector2i(signi(enemy_pos.x - core_pos.x), signi(enemy_pos.y - core_pos.y))
+			_forced_move_with_bounce(enemy_pos, away, enemy, "knockback")
 
 
 func _play_deity_action_animation(
@@ -1198,22 +1548,34 @@ func _heal_deity(pos: Vector2i, amount: float, overflow_to_shield: bool = false)
 
 
 func _tick_enemies(delta: float) -> void:
-	var positions := get_all_enemy_positions()
-	for original in positions:
-		var cell := get_cell(original)
-		var enemy := cell.enemy as EnemyInstance if cell else null
-		if not enemy:
+	var entries := _all_enemy_entries()
+	for entry in entries:
+		var original := Vector2i(entry.get("pos", Vector2i(-1, -1)))
+		var enemy := entry.get("enemy") as EnemyInstance
+		if not enemy or not is_in_bounds(original) or not _cell_has_enemy(original, enemy):
 			continue
 		enemy.visual_progress = minf(
 			1.0,
 			enemy.visual_progress + delta / maxf(0.05, enemy.visual_duration)
 		)
+		enemy.river_cooldown = maxf(0.0, enemy.river_cooldown - delta)
+		enemy.confusion_time = maxf(0.0, enemy.confusion_time - delta)
+		enemy.freeze_time = maxf(0.0, enemy.freeze_time - delta)
+		enemy.vulnerable_time = maxf(0.0, enemy.vulnerable_time - delta)
+		enemy.silence_time = maxf(0.0, enemy.silence_time - delta)
+		enemy.charmed_time = maxf(0.0, enemy.charmed_time - delta)
+		_tick_enemy_poison(original, enemy, delta)
+		if not _cell_has_enemy(original, enemy):
+			continue
+		if enemy.freeze_time > 0.0:
+			continue
 		enemy.slow_timer = maxf(0.0, enemy.slow_timer - delta)
 		enemy.move_timer -= delta
 		if enemy.move_timer > 0.0:
 			continue
-		var multiplier := float(GameDefinitions.BALANCE.forest_slow_multiplier) if enemy.slow_timer > 0.0 else 1.0
-		multiplier *= _terrain_path_cost(cell.terrain)
+		var multiplier := 1.0
+		if enemy.slow_timer > 0.0:
+			multiplier = enemy.slow_strength_multiplier
 		enemy.move_timer = (
 			float(GameDefinitions.BALANCE.enemy_move_interval)
 			* multiplier
@@ -1223,27 +1585,45 @@ func _tick_enemies(delta: float) -> void:
 
 
 func _enemy_step(origin: Vector2i, enemy: EnemyInstance) -> void:
+	if enemy.charmed_time > 0.0:
+		var victim := _nearest_enemy(origin, 1.0, [origin])
+		if victim != Vector2i(-1, -1):
+			_damage_enemy(victim, enemy.attack, origin, Color("d889ff"), "enemy")
+			return
+	if _try_forest_confusion_step(origin, enemy):
+		return
+	if enemy.attack_range > 1 and enemy.silence_time <= 0.0:
+		var ranged_target := _nearest_deity_for_enemy(origin, enemy.attack_range)
+		if ranged_target != Vector2i(-1, -1):
+			_enemy_attack_deity(origin, ranged_target, enemy)
+			return
+		if _manhattan(origin, core_pos) <= enemy.attack_range:
+			_play_enemy_action_animation(enemy, "attack", 0.5)
+			AudioManager.play_sfx("attack", -3.0, 0.85)
+			AudioManager.play_sfx("hit", -3.0, 0.85)
+			attack_visual_requested.emit(origin, core_pos, Color("ff6b62"), enemy.attack, "enemy")
+			GameManager.damage_core(enemy.attack)
+			board_changed.emit()
+			return
 	for adjacent in neighbors(origin):
 		if adjacent == core_pos:
+			if enemy.silence_time > 0.0:
+				return
 			AudioManager.play_sfx("attack", -3.0, 0.85)
 			AudioManager.play_sfx("hit", -3.0, 0.85)
 			GameManager.damage_core(enemy.attack)
-			get_cell(origin).enemy = null
+			_remove_enemy_from_cell(origin, enemy)
 			_pollute_at(origin)
 			board_changed.emit()
 			return
 		var deity := get_cell(adjacent).deity as DeityInstance
 		if deity:
-			_play_enemy_action_animation(enemy, "attack", 0.5)
-			AudioManager.play_sfx("attack", -3.0, 0.85)
-			AudioManager.play_sfx("hit", -3.0, 0.85)
-			attack_visual_requested.emit(origin, adjacent, Color("ff6b62"), enemy.attack, "enemy")
-			_damage_deity(adjacent, enemy.attack)
-			if deity.hp <= 0:
-				get_cell(adjacent).deity = null
+			if enemy.silence_time > 0.0:
+				return
+			_enemy_attack_deity(origin, adjacent, enemy)
 			board_changed.emit()
 			return
-	var path := _path_to_core_or_blocker(origin)
+	var path := _path_to_core_or_blocker(origin, enemy)
 	if path.size() < 2:
 		return
 	var next: Vector2i = path[1]
@@ -1251,28 +1631,300 @@ func _enemy_step(origin: Vector2i, enemy: EnemyInstance) -> void:
 		AudioManager.play_sfx("attack", -3.0, 0.85)
 		AudioManager.play_sfx("hit", -3.0, 0.85)
 		GameManager.damage_core(enemy.attack)
-		get_cell(origin).enemy = null
+		_remove_enemy_from_cell(origin, enemy)
 		_pollute_at(origin)
 	elif get_cell(next).deity:
-		_play_enemy_action_animation(enemy, "attack", 0.5)
-		AudioManager.play_sfx("attack", -3.0, 0.85)
-		AudioManager.play_sfx("hit", -3.0, 0.85)
-		attack_visual_requested.emit(origin, next, Color("ff6b62"), enemy.attack, "enemy")
-		var blocker := get_cell(next).deity as DeityInstance
-		_damage_deity(next, enemy.attack)
-		if blocker.hp <= 0:
-			get_cell(next).deity = null
+		_enemy_attack_deity(origin, next, enemy)
 	else:
-		get_cell(origin).enemy = null
-		get_cell(next).enemy = enemy
-		enemy.visual_from = Vector2(origin)
-		enemy.visual_to = Vector2(next)
-		enemy.visual_progress = 0.0
-		enemy.visual_duration = minf(
-			0.42,
-			maxf(0.16, float(GameDefinitions.BALANCE.enemy_move_interval) * 0.72)
-		)
+		_relocate_enemy(origin, next, enemy)
+		_apply_entered_terrain(origin, next, enemy)
 	board_changed.emit()
+
+
+func _nearest_deity_for_enemy(origin: Vector2i, attack_range: int) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_distance := 9999
+	for y in range(GRID_H):
+		for x in range(GRID_W):
+			var pos := Vector2i(x, y)
+			if not get_cell(pos).deity:
+				continue
+			var distance := _manhattan(origin, pos)
+			if distance <= attack_range and distance < best_distance:
+				best = pos
+				best_distance = distance
+	return best
+
+
+func _enemy_attack_deity(origin: Vector2i, target: Vector2i, enemy: EnemyInstance) -> void:
+	var deity := get_cell(target).deity as DeityInstance
+	if not deity:
+		return
+	_play_enemy_action_animation(enemy, "attack", 0.5)
+	AudioManager.play_sfx("attack", -3.0, 0.85)
+	AudioManager.play_sfx("hit", -3.0, 0.85)
+	attack_visual_requested.emit(origin, target, Color("ff6b62"), enemy.attack, "enemy")
+	_damage_deity(target, enemy.attack)
+	if deity.hp <= 0:
+		get_cell(target).deity = null
+
+
+func _can_relocate_enemy_to(
+	pos: Vector2i,
+	_require_placed_terrain: bool = false,
+	reject_river: bool = false,
+	enemy: EnemyInstance = null
+) -> bool:
+	if (
+		not is_in_bounds(pos)
+		or pos == core_pos
+		or is_enemy_core_slot(pos)
+	):
+		return false
+	var cell := get_cell(pos)
+	return (
+		cell
+		and (not reject_river or cell.terrain != GameDefinitions.TerrainType.RIVER)
+		and (cell.terrain != GameDefinitions.TerrainType.MOUNTAIN or (enemy and enemy.terrain_profile == "flying"))
+		and not cell.deity
+	)
+
+
+func _relocate_enemy(
+	origin: Vector2i,
+	target: Vector2i,
+	enemy: EnemyInstance,
+	require_placed_terrain: bool = false,
+	reject_river: bool = false
+) -> void:
+	if origin == target or not _can_relocate_enemy_to(target, require_placed_terrain, reject_river, enemy):
+		return
+	_remove_enemy_from_cell(origin, enemy)
+	_add_enemy_to_cell(target, enemy)
+	enemy.last_grid_pos = origin
+	enemy.visual_from = Vector2(origin)
+	enemy.visual_to = Vector2(target)
+	enemy.visual_progress = 0.0
+	enemy.visual_duration = minf(
+		0.42,
+		maxf(0.16, float(GameDefinitions.BALANCE.enemy_move_interval) * 0.72)
+	)
+
+
+func _is_forced_hard_obstacle(pos: Vector2i) -> bool:
+	return (
+		not is_in_bounds(pos)
+		or pos == core_pos
+		or is_enemy_core_slot(pos)
+		or get_cell(pos).terrain == GameDefinitions.TerrainType.MOUNTAIN
+		or get_cell(pos).deity
+	)
+
+
+func _rotate_grid_direction(direction: Vector2i, clockwise: bool) -> Vector2i:
+	return (
+		Vector2i(-direction.y, direction.x)
+		if clockwise
+		else Vector2i(direction.y, -direction.x)
+	)
+
+
+func _forced_move_with_bounce(
+	origin: Vector2i,
+	direction: Vector2i,
+	enemy: EnemyInstance,
+	source: String,
+	allowed_terrain: int = -1
+) -> Vector2i:
+	if direction == Vector2i.ZERO:
+		return origin
+	var reflected := -direction
+	var clockwise := _rotate_grid_direction(direction, true)
+	var counter_clockwise := _rotate_grid_direction(direction, false)
+	var directions: Array[Vector2i] = [direction]
+	match source:
+		"river":
+			directions.append(clockwise)
+			directions.append(counter_clockwise)
+			directions.append(reflected)
+		"forest":
+			var random_directions: Array[Vector2i] = [
+				clockwise,
+				counter_clockwise,
+				reflected,
+			]
+			random_directions.shuffle()
+			directions.append_array(random_directions)
+		_:
+			directions.append(reflected)
+			directions.append(clockwise)
+			directions.append(counter_clockwise)
+	for candidate_direction in directions:
+		var target := origin + candidate_direction
+		if _is_forced_hard_obstacle(target):
+			continue
+		if source == "river" and get_cell(target).terrain == GameDefinitions.TerrainType.RIVER:
+			continue
+		if allowed_terrain >= 0 and get_cell(target).terrain != allowed_terrain:
+			continue
+		_relocate_enemy(origin, target, enemy)
+		if source != "river":
+			_apply_entered_terrain(origin, target, enemy)
+		var actual_position := _find_enemy_position(enemy)
+		return actual_position if actual_position != Vector2i(-1, -1) else target
+	return origin
+
+
+func _region_id(pos: Vector2i) -> int:
+	var region := terrain_region(pos)
+	var result := GRID_W * GRID_H
+	for region_pos in region:
+		result = mini(result, index_of(region_pos))
+	return result
+
+
+func _apply_entered_terrain(origin: Vector2i, target: Vector2i, enemy: EnemyInstance) -> void:
+	var terrain := get_cell(target).terrain
+	if terrain != GameDefinitions.TerrainType.RIVER:
+		enemy.river_region_id = -1
+	if terrain != GameDefinitions.TerrainType.FOREST:
+		enemy.forest_region_id = -1
+		enemy.confusion_time = 0.0
+		enemy.confusion_steps = 0
+	if terrain == GameDefinitions.TerrainType.RIVER and enemy.terrain_profile != "swimmer":
+		_try_river_push(origin, target, enemy)
+	elif terrain == GameDefinitions.TerrainType.FOREST and enemy.terrain_profile != "forester":
+		var region_id := _region_id(target)
+		if region_id != enemy.forest_region_id:
+			enemy.forest_region_id = region_id
+			enemy.wander_origin = Vector2i(-1, -1)
+			enemy.wander_target = Vector2i(-1, -1)
+			enemy.wander_returning = false
+			enemy.wander_round_trips = 0
+			enemy.confusion_time = (
+				float(GameDefinitions.BALANCE.forest_confusion_duration)
+				* (
+					float(GameDefinitions.BALANCE.forest_boss_confusion_multiplier)
+					if enemy.archetype == "boss"
+					else 1.0
+				)
+			)
+			enemy.confusion_steps = int(GameDefinitions.BALANCE.forest_confusion_max_steps)
+			enemy.confusion_previous = origin
+
+
+func _try_river_push(origin: Vector2i, river_pos: Vector2i, enemy: EnemyInstance) -> void:
+	var region_id := _region_id(river_pos)
+	if enemy.river_cooldown > 0.0 or enemy.river_region_id == region_id:
+		return
+	enemy.river_region_id = region_id
+	enemy.river_cooldown = float(GameDefinitions.BALANCE.river_trigger_cooldown)
+	var forward := river_pos - origin
+	if forward == Vector2i.ZERO:
+		return
+	var side_a := Vector2i(-forward.y, forward.x)
+	var side_b := Vector2i(forward.y, -forward.x)
+	var options: Array[Dictionary] = []
+	for side in [side_a, side_b]:
+		for distance in range(1, int(GameDefinitions.BALANCE.river_push_search_limit) + 1):
+			var candidate: Vector2i = river_pos + side * distance
+			if not is_in_bounds(candidate):
+				break
+			var candidate_cell := get_cell(candidate)
+			if candidate_cell.terrain == GameDefinitions.TerrainType.RIVER:
+				continue
+			if _can_relocate_enemy_to(candidate, false, true):
+				options.append({"pos": candidate, "distance": distance})
+			break
+	if options.is_empty():
+		var fallback_side := side_a if GameManager.rng.randi_range(0, 1) == 0 else side_b
+		_forced_move_with_bounce(river_pos, fallback_side, enemy, "river")
+		enemy.river_region_id = -1
+		return
+	options.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a.get("distance", 0)) < int(b.get("distance", 0))
+	)
+	var first_option: Dictionary = options[0]
+	var best_distance := int(first_option.get("distance", 0))
+	var closest: Array = options.filter(func(option: Dictionary) -> bool:
+		return int(option.get("distance", 0)) == best_distance
+	)
+	var chosen: Dictionary = closest[GameManager.rng.randi_range(0, closest.size() - 1)]
+	var destination := Vector2i(chosen.get("pos", river_pos))
+	_relocate_enemy(river_pos, destination, enemy, false, true)
+	enemy.river_region_id = -1
+
+
+func _try_forest_confusion_step(origin: Vector2i, enemy: EnemyInstance) -> bool:
+	if enemy.confusion_time <= 0.0 or enemy.confusion_steps <= 0:
+		return false
+	var directions: Array[Vector2i] = [
+		Vector2i.RIGHT,
+		Vector2i.LEFT,
+		Vector2i.DOWN,
+		Vector2i.UP,
+	]
+	directions.shuffle()
+	for direction in directions:
+		var direct_target := origin + direction
+		if direct_target == enemy.confusion_previous and directions.size() > 1:
+			continue
+		var target := _forced_move_with_bounce(
+			origin,
+			direction,
+			enemy,
+			"forest",
+			GameDefinitions.TerrainType.FOREST
+		)
+		if target != origin:
+			enemy.confusion_previous = origin
+			enemy.confusion_steps -= 1
+			return true
+	enemy.confusion_time = 0.0
+	return false
+
+
+func _tick_enemy_poison(pos: Vector2i, enemy: EnemyInstance, delta: float) -> void:
+	if enemy.poison_time <= 0.0 or enemy.poison_stacks <= 0:
+		return
+	enemy.poison_time = maxf(0.0, enemy.poison_time - delta)
+	enemy.poison_tick_timer -= delta
+	if enemy.poison_tick_timer > 0.0:
+		return
+	enemy.poison_tick_timer = float(GameDefinitions.BALANCE.poison_tick_interval)
+	var damage := maxi(
+		1,
+		roundi(
+			float(enemy.poison_stacks)
+			* float(GameDefinitions.BALANCE.poison_damage_per_stack)
+			* enemy.poison_damage_multiplier
+		)
+	)
+	enemy.hp -= damage
+	if enemy.hp <= 0:
+		_spread_poison_on_death(pos, enemy)
+		_remove_enemy_from_cell(pos, enemy)
+		_play_enemy_death(true)
+		_pollute_at(pos)
+
+
+func _spread_poison_on_death(pos: Vector2i, enemy: EnemyInstance) -> void:
+	if enemy.poison_stacks <= 0 or not enemy.poison_spreads:
+		return
+	var targets := 0
+	for candidate in get_all_enemy_positions():
+		if candidate == pos or _manhattan(candidate, pos) > int(GameDefinitions.BALANCE.poison_spread_range):
+			continue
+		var spread_target := get_cell(candidate).enemy as EnemyInstance
+		if spread_target:
+			spread_target.poison_stacks = mini(
+				enemy.poison_stacks,
+				spread_target.poison_stacks + int(GameDefinitions.BALANCE.poison_spread_stacks)
+			)
+			spread_target.poison_time = float(GameDefinitions.BALANCE.poison_duration)
+			targets += 1
+			if targets >= int(GameDefinitions.BALANCE.poison_spread_targets):
+				break
 
 
 func _damage_deity(pos: Vector2i, raw_damage: int) -> void:
@@ -1281,6 +1933,11 @@ func _damage_deity(pos: Vector2i, raw_damage: int) -> void:
 		return
 	var stats := deity_stats(pos)
 	var damage := float(raw_damage) * (1.0 - float(stats.get("damage_reduction", 0.0)))
+	if deity.has_meta("damage_reduction_until"):
+		if pulse_time <= float(deity.get_meta("damage_reduction_until")):
+			damage *= 1.0 - float(GameDefinitions.BALANCE.vitality_damage_reduction)
+		else:
+			deity.remove_meta("damage_reduction_until")
 	if deity.shield > 0.0:
 		var absorbed := minf(deity.shield, damage)
 		deity.shield -= absorbed
@@ -1299,11 +1956,11 @@ func _play_enemy_action_animation(
 	enemy.visual_animation_duration = duration
 
 
-func _path_to_core_or_blocker(start: Vector2i) -> Array[Vector2i]:
-	var core_path := _weighted_path(start, false)
+func _path_to_core_or_blocker(start: Vector2i, enemy: EnemyInstance = null) -> Array[Vector2i]:
+	var core_path := _weighted_path(start, false, {}, false, false, enemy)
 	if core_path.size() >= 2:
 		return core_path
-	return _weighted_path(start, true)
+	return _weighted_path(start, true, {}, false, false, enemy)
 
 
 func _weighted_path(
@@ -1311,7 +1968,8 @@ func _weighted_path(
 	stop_at_deity: bool,
 	terrain_overrides: Dictionary = {},
 	ignore_enemies: bool = false,
-	ignore_deities: bool = false
+	ignore_deities: bool = false,
+	enemy: EnemyInstance = null
 ) -> Array[Vector2i]:
 	var frontier: Array[Vector2i] = [start]
 	var parent: Dictionary = {}
@@ -1333,17 +1991,15 @@ func _weighted_path(
 		for next in neighbors(current):
 			if settled.has(next):
 				continue
-			if next != core_pos and is_enemy_core(next) and next != start:
+			if next != core_pos and is_enemy_core_slot(next) and next != start:
 				continue
 			var cell := get_cell(next)
 			var terrain := _terrain_for_path(next, terrain_overrides)
-			if terrain == GameDefinitions.TerrainType.MOUNTAIN:
-				continue
-			if not ignore_enemies and cell.enemy and next != start:
+			if terrain == GameDefinitions.TerrainType.MOUNTAIN and (not enemy or enemy.terrain_profile != "flying"):
 				continue
 			if cell.deity and not stop_at_deity and not ignore_deities:
 				continue
-			var next_distance := float(distance[current]) + _terrain_path_cost(terrain)
+			var next_distance := float(distance[current]) + _terrain_path_cost(terrain, enemy)
 			if not distance.has(next) or next_distance < float(distance[next]):
 				distance[next] = next_distance
 				parent[next] = current
@@ -1360,7 +2016,7 @@ func _weighted_path(
 
 
 func _terrain_for_path(pos: Vector2i, terrain_overrides: Dictionary = {}) -> int:
-	if pos == core_pos:
+	if pos == core_pos or is_enemy_core_slot(pos):
 		return GameDefinitions.TerrainType.PLAIN
 	if terrain_overrides.has(pos):
 		return int(terrain_overrides[pos])
@@ -1368,11 +2024,24 @@ func _terrain_for_path(pos: Vector2i, terrain_overrides: Dictionary = {}) -> int
 	return cell.terrain if cell else GameDefinitions.TerrainType.NONE
 
 
-func _terrain_path_cost(terrain: int) -> float:
+func _terrain_path_cost(terrain: int, enemy: EnemyInstance = null) -> float:
+	var profile := enemy.terrain_profile if enemy else "normal"
+	if profile == "flying":
+		return 1.0
 	if terrain == GameDefinitions.TerrainType.MOUNTAIN:
 		return INF
-	var costs: Dictionary = GameDefinitions.BALANCE.terrain_path_cost
-	return float(costs.get(terrain, 1.0))
+	if profile == "swimmer" and terrain == GameDefinitions.TerrainType.RIVER:
+		return 0.65
+	if profile == "forester" and terrain == GameDefinitions.TerrainType.FOREST:
+		return 0.7
+	match terrain:
+		GameDefinitions.TerrainType.PLAIN:
+			return 0.8
+		GameDefinitions.TerrainType.FOREST:
+			return 1.4
+		GameDefinitions.TerrainType.RIVER:
+			return 2.2
+	return 1.0
 
 
 func _path_total_cost(path: Array, terrain_overrides: Dictionary = {}) -> float:
@@ -1400,15 +2069,30 @@ func enemy_description(pos: Vector2i) -> String:
 	if not enemy:
 		return ""
 	var terrain_name: String = str(GameDefinitions.TERRAIN_NAMES.get(cell.terrain, "虚空"))
-	var movement_state: String = (
-		"受到减速，移动间隔延长"
-		if enemy.slow_timer > 0.0
-		else "正常向中央核心移动"
-	)
-	return "生命：%d / %d\n攻击：%d\n所在位置：%s\n污染：%d / %d\n状态：%s\n\n接近核心或神祇后会发动攻击；死亡时污染当前有效地形格。" % [
+	var states: Array[String] = []
+	if cell.terrain == GameDefinitions.TerrainType.PLAIN:
+		states.append("暴露")
+	if enemy.slow_timer > 0.0:
+		states.append("减速×%d" % maxi(1, enemy.slow_stacks))
+	if enemy.freeze_time > 0.0:
+		states.append("冻结")
+	if enemy.vulnerable_time > 0.0:
+		states.append("易伤")
+	if enemy.poison_time > 0.0:
+		states.append("中毒×%d" % enemy.poison_stacks)
+	if enemy.confusion_time > 0.0:
+		states.append("森林混乱")
+	if enemy.silence_time > 0.0:
+		states.append("沉默")
+	if enemy.charmed_time > 0.0:
+		states.append("策反")
+	var movement_state := "、".join(states) if not states.is_empty() else "正常向中央核心移动"
+	var stack_count := _enemies_at(pos).size()
+	return "生命：%d / %d\n攻击：%d\n同格敌人：%d\n所在位置：%s\n污染：%d / %d\n状态：%s\n\n接近核心或神祇后会发动攻击；死亡时污染当前有效地形格。" % [
 		enemy.hp,
 		enemy.max_hp,
 		enemy.attack,
+		stack_count,
 		terrain_name,
 		cell.pollution,
 		int(GameDefinitions.BALANCE.cell_pollution_limit),
@@ -1433,6 +2117,31 @@ func _nearest_enemy(origin: Vector2i, max_range: float, excluded: Array = []) ->
 	return best
 
 
+func _position_in_range_of_region(
+	target: Vector2i,
+	region: Array[Vector2i],
+	max_range: float
+) -> bool:
+	for origin in region:
+		if float(_manhattan(origin, target)) <= max_range + float(GameDefinitions.BALANCE.attack_range_tolerance):
+			return true
+	return false
+
+
+func _nearest_enemy_from_region(origin: Vector2i, max_range: float) -> Vector2i:
+	var region := terrain_region(origin)
+	var best := Vector2i(-1, -1)
+	var best_core_distance := 9999
+	for target in get_all_enemy_positions():
+		if not _position_in_range_of_region(target, region, max_range):
+			continue
+		var core_distance := _manhattan(target, core_pos)
+		if core_distance < best_core_distance:
+			best = target
+			best_core_distance = core_distance
+	return best
+
+
 func _damage_enemy(
 	target: Vector2i,
 	damage: int,
@@ -1443,11 +2152,28 @@ func _damage_enemy(
 	var enemy := get_cell(target).enemy as EnemyInstance
 	if not enemy:
 		return
+	if get_cell(target).terrain == GameDefinitions.TerrainType.PLAIN:
+		damage = maxi(
+			1,
+			roundi(
+				float(damage)
+				* float(GameDefinitions.BALANCE.plain_exposure_damage_multiplier)
+			)
+		)
+	if enemy.vulnerable_time > 0.0:
+		damage = maxi(
+			1,
+			roundi(
+				float(damage)
+				* float(GameDefinitions.BALANCE.stagnation_vulnerable_multiplier)
+			)
+		)
 	attack_visual_requested.emit(source, target, color, damage, effect_profile)
 	AudioManager.play_sfx("hit", -4.0)
 	enemy.hp -= damage
 	if enemy.hp <= 0:
-		get_cell(target).enemy = null
+		_spread_poison_on_death(target, enemy)
+		_remove_enemy_from_cell(target, enemy)
 		_play_enemy_death(true)
 		_pollute_at(target)
 	board_changed.emit()
@@ -1507,23 +2233,23 @@ func deity_ability_description(deity_type: int, terrain: int) -> String:
 	if deity_type == GameDefinitions.DeityType.ATTACK:
 		match terrain:
 			GameDefinitions.TerrainType.PLAIN:
-				return "能力：连续直射。稳定攻击单个目标。"
+				return "速射：高速攻击危险目标；山地强化连射伤害，河流叠加攻速，森林强化新目标首击。"
 			GameDefinitions.TerrainType.MOUNTAIN:
-				return "能力：崩岩投射。命中时对目标附近敌人造成范围伤害。"
+				return "大炮：优先轰击远处或危险敌人；每邻接一种异类神域，爆炸范围扩大。"
 			GameDefinitions.TerrainType.RIVER:
-				return "能力：回澜弹射。命中后额外弹向附近另一名敌人。"
+				return "弹射：攻击在敌人间跳跃；平原增加距离，山地增加分裂，森林增加跳跃次数。"
 			GameDefinitions.TerrainType.FOREST:
-				return "能力：荆蔓追猎。命中后使敌人短时间减速。"
+				return "中毒：持续造成毒伤；平原允许叠毒，山地提高毒伤，河流使死亡目标传播毒素。"
 	else:
 		match terrain:
 			GameDefinitions.TerrainType.PLAIN:
-				return "能力：丰穗循环。以较短间隔稳定生产神力。"
+				return "治疗：优先治疗生命比例最低的神祇；山地附盾，河流扩散治疗，森林赋予减伤。"
 			GameDefinitions.TerrainType.MOUNTAIN:
-				return "能力：山岳蕴藏。生产较慢，但每次获得更多神力。"
+				return "凝滞：周期攻击并减速；平原可叠层冻结，河流强化减速，森林附加易伤。"
 			GameDefinitions.TerrainType.RIVER:
-				return "能力：涌泉循环。正常生产，并周期性积蓄免费刷新。"
+				return "吸引：将附近敌人拉向自身；平原可策反，山地可抛离，森林可沉默。"
 			GameDefinitions.TerrainType.FOREST:
-				return "能力：生息滋养。正常生产，并周期性治疗周围受伤神祇。"
+				return "丰饶：周期生产神力；平原提供阶段利息，山地使敌人绕行，河流可能获得免费刷新。"
 	return ""
 
 
@@ -1535,17 +2261,8 @@ func selected_deity_description(pos: Vector2i) -> String:
 	var stats := deity_stats(pos)
 	if stats.is_empty():
 		return ""
-	var function_text := ""
+	var function_text := deity_ability_description(deity.deity_type, cell.terrain)
 	if deity.deity_type == GameDefinitions.DeityType.ATTACK:
-		match cell.terrain:
-			GameDefinitions.TerrainType.PLAIN:
-				function_text = "持续快速攻击单个目标。"
-			GameDefinitions.TerrainType.FOREST:
-				function_text = "攻击会使敌人减速。"
-			GameDefinitions.TerrainType.MOUNTAIN:
-				function_text = "攻击命中后会对附近敌人造成溅射伤害。"
-			GameDefinitions.TerrainType.RIVER:
-				function_text = "攻击命中后会继续弹射到附近敌人。"
 		return "等级：%d\n功能：%s\n\n生命：%d / %d\n伤害：%d\n射程：%.1f 格\n攻击间隔：%.2f 秒" % [
 			deity.level,
 			function_text,
@@ -1555,20 +2272,17 @@ func selected_deity_description(pos: Vector2i) -> String:
 			float(stats.range),
 			float(stats.interval),
 		]
-	match cell.terrain:
-		GameDefinitions.TerrainType.PLAIN:
-			function_text = "以更短间隔持续生产神力。"
-		GameDefinitions.TerrainType.FOREST:
-			function_text = "生产神力，并周期性治疗附近神祇。"
-		GameDefinitions.TerrainType.MOUNTAIN:
-			function_text = "生产速度较慢，但单次产量较高。"
-		GameDefinitions.TerrainType.RIVER:
-			function_text = "生产神力，并周期性提供免费商店刷新。"
-	return "等级：%d\n功能：%s\n\n生命：%d / %d\n单次产量：%.2f\n生产间隔：%.2f 秒" % [
+	var value_label := "治疗" if cell.terrain == GameDefinitions.TerrainType.PLAIN else (
+		"凝滞伤害" if cell.terrain == GameDefinitions.TerrainType.MOUNTAIN else (
+			"控制" if cell.terrain == GameDefinitions.TerrainType.RIVER else "产量"
+		)
+	)
+	return "等级：%d\n功能：%s\n\n生命：%d / %d\n%s：%.2f\n施法间隔：%.2f 秒" % [
 		deity.level,
 		function_text,
 		deity.hp,
 		deity.max_hp,
+		value_label,
 		float(stats.amount),
 		float(stats.interval),
 	]
@@ -1577,25 +2291,88 @@ func deity_function_description(pos: Vector2i) -> String:
 	var deity := cell.deity as DeityInstance if cell else null
 	if not deity:
 		return ""
-	if deity.deity_type == GameDefinitions.DeityType.ATTACK:
-		match cell.terrain:
-			GameDefinitions.TerrainType.PLAIN:
-				return "快速直射；特殊攻击进行连续射击。"
-			GameDefinitions.TerrainType.FOREST:
-				return "追踪并减速；特殊攻击强化减速并自愈。"
-			GameDefinitions.TerrainType.MOUNTAIN:
-				return "远程抛射并溅射；优先处理远处或危险目标。"
-			GameDefinitions.TerrainType.RIVER:
-				return "攻击会弹射；特殊攻击增加弹射次数。"
-	match cell.terrain:
+	return deity_ability_description(deity.deity_type, cell.terrain)
+
+
+func deity_active_effects_description(pos: Vector2i) -> String:
+	var cell := get_cell(pos)
+	var deity := cell.deity as DeityInstance if cell else null
+	if not deity:
+		return ""
+	var resonances: Dictionary = deity_domain_context(pos).get("resonances", {})
+	var lines: Array[String] = []
+	for terrain in [
+		GameDefinitions.TerrainType.PLAIN,
+		GameDefinitions.TerrainType.MOUNTAIN,
+		GameDefinitions.TerrainType.RIVER,
+		GameDefinitions.TerrainType.FOREST,
+	]:
+		if not bool(resonances.get(terrain, false)):
+			continue
+		var effect := ""
+		if deity.deity_type == GameDefinitions.DeityType.ATTACK:
+			match cell.terrain:
+				GameDefinitions.TerrainType.PLAIN:
+					effect = {
+						GameDefinitions.TerrainType.MOUNTAIN: "连射逐渐增伤",
+						GameDefinitions.TerrainType.RIVER: "连射逐渐加速",
+						GameDefinitions.TerrainType.FOREST: "新目标首击强化",
+					}.get(terrain, "")
+				GameDefinitions.TerrainType.MOUNTAIN:
+					effect = "爆炸范围扩大"
+				GameDefinitions.TerrainType.RIVER:
+					effect = {
+						GameDefinitions.TerrainType.PLAIN: "弹射距离增加",
+						GameDefinitions.TerrainType.MOUNTAIN: "弹射可以分裂",
+						GameDefinitions.TerrainType.FOREST: "弹射次数增加",
+					}.get(terrain, "")
+				GameDefinitions.TerrainType.FOREST:
+					effect = {
+						GameDefinitions.TerrainType.PLAIN: "中毒可以叠层",
+						GameDefinitions.TerrainType.MOUNTAIN: "每层毒伤提高",
+						GameDefinitions.TerrainType.RIVER: "死亡传播毒素",
+					}.get(terrain, "")
+		else:
+			match cell.terrain:
+				GameDefinitions.TerrainType.PLAIN:
+					effect = {
+						GameDefinitions.TerrainType.MOUNTAIN: "治疗附加护盾",
+						GameDefinitions.TerrainType.RIVER: "治疗向附近扩散",
+						GameDefinitions.TerrainType.FOREST: "治疗附加减伤",
+					}.get(terrain, "")
+				GameDefinitions.TerrainType.MOUNTAIN:
+					effect = {
+						GameDefinitions.TerrainType.PLAIN: "减速叠层后冻结",
+						GameDefinitions.TerrainType.RIVER: "单层减速增强",
+						GameDefinitions.TerrainType.FOREST: "减速附加易伤",
+					}.get(terrain, "")
+				GameDefinitions.TerrainType.RIVER:
+					effect = {
+						GameDefinitions.TerrainType.PLAIN: "吸引时可能策反",
+						GameDefinitions.TerrainType.MOUNTAIN: "吸引后可能抛离",
+						GameDefinitions.TerrainType.FOREST: "吸引时可能沉默",
+					}.get(terrain, "")
+				GameDefinitions.TerrainType.FOREST:
+					effect = {
+						GameDefinitions.TerrainType.PLAIN: "战斗结束获得利息",
+						GameDefinitions.TerrainType.MOUNTAIN: "敌人尽量绕行",
+						GameDefinitions.TerrainType.RIVER: "生产可能获得免费刷新",
+					}.get(terrain, "")
+		if not effect.is_empty():
+			lines.append("与%s相邻：%s" % [GameDefinitions.TERRAIN_NAMES[terrain], effect])
+	return "\n".join(lines) if not lines.is_empty() else "当前没有异类神域相邻"
+
+
+func large_domain_skill_description(pos: Vector2i) -> String:
+	match get_cell(pos).terrain:
 		GameDefinitions.TerrainType.PLAIN:
-			return "基础生产较快；特殊生产额外产出一次。"
-		GameDefinitions.TerrainType.FOREST:
-			return "特殊生产释放生命绽放，治疗并提供护盾。"
+			return "一望无垠：整片平原暂时成为攻击或治疗的施法起点。"
 		GameDefinitions.TerrainType.MOUNTAIN:
-			return "生产较慢、单次产量较高；特殊生产额外产出。"
+			return "地壳隆起：周围合法地形暂时变为山地并改变敌人路线。"
 		GameDefinitions.TerrainType.RIVER:
-			return "特殊生产提供一次免费商店刷新。"
+			return "洪流：河流向外扩展，淹没普通敌人并重伤强敌。"
+		GameDefinitions.TerrainType.FOREST:
+			return "迷林徘徊：森林内敌人每步随机改向，撞上硬障碍后反弹，效果结束后恢复寻路。"
 	return ""
 
 
@@ -1604,6 +2381,239 @@ func terrain_deity_preview(pos: Vector2i, deity_type: int) -> String:
 	if not cell or cell.terrain == GameDefinitions.TerrainType.NONE:
 		return ""
 	return deity_form_name(pos, deity_type)
+
+
+func terrain_domain_description(pos: Vector2i) -> String:
+	if not is_in_bounds(pos) or get_cell(pos).terrain == GameDefinitions.TerrainType.NONE:
+		return ""
+	var region := terrain_region(pos)
+	var adjacent_types: Dictionary = {}
+	for region_pos in region:
+		for adjacent in neighbors(region_pos):
+			var terrain := get_cell(adjacent).terrain
+			if (
+				terrain != GameDefinitions.TerrainType.NONE
+				and terrain != get_cell(pos).terrain
+			):
+				adjacent_types[terrain] = true
+	var names: Array[String] = []
+	for terrain in adjacent_types:
+		names.append(str(GameDefinitions.TERRAIN_NAMES[int(terrain)]))
+	var threshold := int(GameDefinitions.BALANCE.large_domain_threshold)
+	return (
+		"%s神域\n面积：%d格\n大型技能：%s（%s）\n征祇：%s\n佑祇：%s\n相邻异类神域：%s"
+		% [
+			GameDefinitions.TERRAIN_NAMES[get_cell(pos).terrain],
+			region.size(),
+			large_domain_skill_name(pos),
+			"已解锁" if region.size() >= threshold else "需要%d格" % threshold,
+			deity_form_name(pos, GameDefinitions.DeityType.ATTACK),
+			deity_form_name(pos, GameDefinitions.DeityType.RESOURCE),
+			"、".join(names) if not names.is_empty() else "无",
+		]
+	)
+
+
+func large_domain_skill_name(pos: Vector2i) -> String:
+	if not is_in_bounds(pos):
+		return ""
+	match get_cell(pos).terrain:
+		GameDefinitions.TerrainType.PLAIN:
+			return "一望无垠"
+		GameDefinitions.TerrainType.MOUNTAIN:
+			return "地壳隆起"
+		GameDefinitions.TerrainType.RIVER:
+			return "洪流"
+		GameDefinitions.TerrainType.FOREST:
+			return "迷林徘徊"
+	return ""
+
+
+func can_activate_large_domain_skill(pos: Vector2i) -> bool:
+	if TurnManager.current_phase != TurnManager.Phase.COMBAT:
+		return false
+	var deity := get_cell(pos).deity as DeityInstance if is_in_bounds(pos) else null
+	return (
+		deity
+		and not deity.large_skill_used
+		and terrain_region(pos).size() >= int(GameDefinitions.BALANCE.large_domain_threshold)
+	)
+
+
+func activate_large_domain_skill(pos: Vector2i) -> bool:
+	if not can_activate_large_domain_skill(pos):
+		return false
+	var deity := get_cell(pos).deity as DeityInstance
+	deity.large_skill_used = true
+	match get_cell(pos).terrain:
+		GameDefinitions.TerrainType.PLAIN:
+			deity.large_skill_time = float(GameDefinitions.BALANCE.plain_large_skill_duration)
+		GameDefinitions.TerrainType.MOUNTAIN:
+			_activate_mountain_large_skill(pos)
+		GameDefinitions.TerrainType.RIVER:
+			_activate_river_large_skill(pos)
+		GameDefinitions.TerrainType.FOREST:
+			_activate_forest_large_skill(pos)
+	GameManager.post_message("%s发动：%s" % [
+		deity_form_name(pos, deity.deity_type),
+		large_domain_skill_name(pos),
+	])
+	board_changed.emit()
+	queue_redraw()
+	return true
+
+
+func _activate_mountain_large_skill(pos: Vector2i) -> void:
+	_restore_temporary_terrain()
+	for y_offset in range(-1, 2):
+		for x_offset in range(-1, 2):
+			var target := pos + Vector2i(x_offset, y_offset)
+			if (
+				not is_in_bounds(target)
+				or target == core_pos
+				or is_enemy_core_slot(target)
+				or get_cell(target).deity
+			):
+				continue
+			var prospective: Array[Vector2i] = [target]
+			var valid := true
+			for enemy_core_pos in enemy_cores:
+				var data: Dictionary = enemy_cores[enemy_core_pos]
+				if int(data.hp) > 0 and not _enemy_core_has_path(enemy_core_pos, prospective):
+					valid = false
+					break
+			if not valid:
+				continue
+			temporary_terrain[target] = get_cell(target).terrain
+			get_cell(target).terrain = GameDefinitions.TerrainType.MOUNTAIN
+	temporary_terrain_time = float(GameDefinitions.BALANCE.mountain_large_skill_duration)
+
+
+func _activate_river_large_skill(pos: Vector2i) -> void:
+	_restore_temporary_terrain()
+	var affected: Dictionary = {}
+	for region_pos in terrain_region(pos):
+		for adjacent in neighbors(region_pos):
+			if (
+				adjacent != core_pos
+				and not is_enemy_core_slot(adjacent)
+				and get_cell(adjacent).terrain != GameDefinitions.TerrainType.MOUNTAIN
+			):
+				affected[adjacent] = true
+	for affected_variant in affected:
+		var affected_pos := Vector2i(affected_variant)
+		temporary_terrain[affected_pos] = get_cell(affected_pos).terrain
+		get_cell(affected_pos).terrain = GameDefinitions.TerrainType.RIVER
+	temporary_terrain_time = float(GameDefinitions.BALANCE.river_large_skill_duration)
+	for enemy_pos_variant in affected:
+		var enemy_pos := Vector2i(enemy_pos_variant)
+		var enemy := get_cell(enemy_pos).enemy as EnemyInstance
+		if not enemy:
+			continue
+		if enemy.archetype == "normal":
+			enemy.hp = 0
+		elif enemy.archetype == "boss":
+			enemy.hp -= maxi(
+				1,
+				roundi(float(enemy.max_hp) * float(GameDefinitions.BALANCE.river_large_skill_damage_ratio_boss))
+			)
+		else:
+			enemy.hp -= maxi(
+				1,
+				roundi(float(enemy.max_hp) * float(GameDefinitions.BALANCE.river_large_skill_damage_ratio_elite))
+			)
+		if enemy.hp <= 0:
+			_remove_enemy_from_cell(enemy_pos, enemy)
+			_play_enemy_death(true)
+
+
+func _activate_forest_large_skill(pos: Vector2i) -> void:
+	var region := terrain_region(pos)
+	for enemy_pos in get_all_enemy_positions():
+		if enemy_pos not in region:
+			continue
+		var enemy := get_cell(enemy_pos).enemy as EnemyInstance
+		if enemy:
+			enemy.confusion_time = float(GameDefinitions.BALANCE.forest_large_skill_duration)
+			enemy.confusion_steps = maxi(
+				2,
+				region.size() * int(GameDefinitions.BALANCE.forest_large_skill_round_trips) * 2
+			)
+			enemy.forest_region_id = _region_id(enemy_pos)
+			enemy.confusion_previous = Vector2i(-1, -1)
+			enemy.wander_origin = Vector2i(-1, -1)
+			enemy.wander_round_trips = 0
+			enemy.wander_returning = false
+			enemy.wander_target = Vector2i(-1, -1)
+
+
+func _tick_large_domain_skills(delta: float) -> void:
+	for deity_pos in get_all_deity_positions():
+		var deity := get_cell(deity_pos).deity as DeityInstance
+		if deity and deity.large_skill_time > 0.0:
+			deity.large_skill_time = maxf(0.0, deity.large_skill_time - delta)
+	if temporary_terrain_time > 0.0:
+		temporary_terrain_time = maxf(0.0, temporary_terrain_time - delta)
+		if temporary_terrain_time <= 0.0:
+			_restore_temporary_terrain()
+
+
+func _restore_temporary_terrain() -> void:
+	for pos in temporary_terrain:
+		if is_in_bounds(pos):
+			get_cell(pos).terrain = int(temporary_terrain[pos])
+	temporary_terrain.clear()
+	temporary_terrain_time = 0.0
+	recalculate_all_deities()
+
+
+func collect_abundance_interest() -> float:
+	if combat_interest_paid:
+		return 0.0
+	combat_interest_paid = true
+	var total := 0.0
+	for pos in get_all_deity_positions():
+		var deity := get_cell(pos).deity as DeityInstance
+		if (
+			not deity
+			or deity.deity_type != GameDefinitions.DeityType.RESOURCE
+			or get_cell(pos).terrain != GameDefinitions.TerrainType.FOREST
+		):
+			continue
+		var resonances: Dictionary = deity_domain_context(pos).get("resonances", {})
+		if not bool(resonances.get(GameDefinitions.TerrainType.PLAIN, false)):
+			continue
+		var basis := minf(
+			deity.combat_interest_base,
+			float(GameDefinitions.BALANCE.abundance_interest_resource_cap)
+		)
+		var gain := (
+			floorf(basis / float(GameDefinitions.BALANCE.abundance_interest_unit))
+			* float(GameDefinitions.BALANCE.abundance_interest_gain)
+		)
+		total += minf(gain, float(GameDefinitions.BALANCE.abundance_interest_max_gain))
+	if total > 0.0:
+		ResourceManager.add_divine_power(total)
+		ProgressManager.add_stat("resource_income_round", total)
+		ProgressManager.add_stat("resource_income_total", total)
+	return total
+
+
+func reset_large_domain_state() -> void:
+	_restore_temporary_terrain()
+	for deity_pos in get_all_deity_positions():
+		var deity := get_cell(deity_pos).deity as DeityInstance
+		if deity:
+			deity.large_skill_used = false
+			deity.large_skill_time = 0.0
+	for enemy_pos in get_all_enemy_positions():
+		var enemy := get_cell(enemy_pos).enemy as EnemyInstance
+		if enemy:
+			enemy.wander_origin = Vector2i(-1, -1)
+			enemy.wander_target = Vector2i(-1, -1)
+			enemy.wander_round_trips = 0
+			enemy.confusion_time = 0.0
+			enemy.confusion_steps = 0
 
 
 func _check_victory() -> void:
@@ -1706,8 +2716,8 @@ func _toggle_fullscreen() -> void:
 	var mode := DisplayServer.window_get_mode()
 	DisplayServer.window_set_mode(
 		DisplayServer.WINDOW_MODE_WINDOWED
-		if mode == DisplayServer.WINDOW_MODE_FULLSCREEN
-		else DisplayServer.WINDOW_MODE_FULLSCREEN
+		if mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+		else DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
 	)
 
 
@@ -1768,13 +2778,8 @@ func _handle_click(pos: Vector2i) -> void:
 		queue_redraw()
 		return
 	elif TurnManager.current_phase == TurnManager.Phase.BUILD and get_cell(pos).piece_id >= 0:
-		var existing_deity_pos := region_deity_position(pos)
-		if existing_deity_pos != Vector2i(-1, -1):
-			selected_pos = existing_deity_pos
-			deity_selected.emit(existing_deity_pos)
-		else:
-			selected_pos = pos
-			terrain_selected.emit(pos)
+		selected_pos = pos
+		terrain_selected.emit(pos)
 		queue_redraw()
 
 
@@ -1823,13 +2828,11 @@ func _draw() -> void:
 	_draw_preview_routes()
 	_draw_focus_desaturation()
 	_draw_selected_attack_range()
+	_draw_large_domain_effects()
 	_draw_migration_targets()
 	if selected_pos != Vector2i(-1, -1):
 		var selection_cells: Array[Vector2i] = []
-		if get_cell(selected_pos).deity and migration_source == Vector2i(-1, -1):
-			selection_cells.assign(terrain_region(selected_pos))
-		else:
-			selection_cells.append(selected_pos)
+		selection_cells.append(selected_pos)
 		for region_pos in selection_cells:
 			var selected_rect := Rect2(
 				grid_to_world(region_pos) + Vector2(2, 2),
@@ -1843,16 +2846,61 @@ func _draw_domain_outer_edges(pos: Vector2i, rect: Rect2, terrain: int) -> void:
 		draw_rect(rect.grow(-1.0), Color("353945"), false, 1.0)
 		return
 	var outline := Color(0.09, 0.11, 0.12, 0.46)
-	var sides := [
-		[Vector2i.UP, rect.position, Vector2(rect.end.x, rect.position.y)],
-		[Vector2i.DOWN, Vector2(rect.position.x, rect.end.y), rect.end],
-		[Vector2i.LEFT, rect.position, Vector2(rect.position.x, rect.end.y)],
-		[Vector2i.RIGHT, Vector2(rect.end.x, rect.position.y), rect.end],
-	]
-	for side in sides:
-		var adjacent: Vector2i = pos + Vector2i(side[0])
-		if not is_in_bounds(adjacent) or get_cell(adjacent).terrain != terrain:
-			draw_line(Vector2(side[1]), Vector2(side[2]), outline, 1.5, true)
+	var edge_width := 2.2
+	var radius := 18.0
+	var left := rect.position.x
+	var top := rect.position.y
+	var right := rect.end.x
+	var bottom := rect.end.y
+	var exposed_top := _domain_edge_exposed(pos, terrain, Vector2i.UP)
+	var exposed_bottom := _domain_edge_exposed(pos, terrain, Vector2i.DOWN)
+	var exposed_left := _domain_edge_exposed(pos, terrain, Vector2i.LEFT)
+	var exposed_right := _domain_edge_exposed(pos, terrain, Vector2i.RIGHT)
+	if exposed_top:
+		draw_line(
+			Vector2(left + (radius if exposed_left else 0.0), top),
+			Vector2(right - (radius if exposed_right else 0.0), top),
+			outline,
+			edge_width,
+			true
+		)
+	if exposed_bottom:
+		draw_line(
+			Vector2(left + (radius if exposed_left else 0.0), bottom),
+			Vector2(right - (radius if exposed_right else 0.0), bottom),
+			outline,
+			edge_width,
+			true
+		)
+	if exposed_left:
+		draw_line(
+			Vector2(left, top + (radius if exposed_top else 0.0)),
+			Vector2(left, bottom - (radius if exposed_bottom else 0.0)),
+			outline,
+			edge_width,
+			true
+		)
+	if exposed_right:
+		draw_line(
+			Vector2(right, top + (radius if exposed_top else 0.0)),
+			Vector2(right, bottom - (radius if exposed_bottom else 0.0)),
+			outline,
+			edge_width,
+			true
+		)
+	if exposed_top and exposed_left:
+		draw_arc(Vector2(left + radius, top + radius), radius, PI, PI * 1.5, 16, outline, edge_width, true)
+	if exposed_top and exposed_right:
+		draw_arc(Vector2(right - radius, top + radius), radius, PI * 1.5, TAU, 16, outline, edge_width, true)
+	if exposed_bottom and exposed_right:
+		draw_arc(Vector2(right - radius, bottom - radius), radius, 0.0, PI * 0.5, 16, outline, edge_width, true)
+	if exposed_bottom and exposed_left:
+		draw_arc(Vector2(left + radius, bottom - radius), radius, PI * 0.5, PI, 16, outline, edge_width, true)
+
+
+func _domain_edge_exposed(pos: Vector2i, terrain: int, direction: Vector2i) -> bool:
+	var adjacent := pos + direction
+	return not is_in_bounds(adjacent) or get_cell(adjacent).terrain != terrain
 
 
 func _draw_focus_desaturation() -> void:
@@ -1875,7 +2923,7 @@ func _draw_focus_desaturation() -> void:
 			visual_grid * CELL_SIZE + Vector2.ONE,
 			Vector2(CELL_SIZE - 2, CELL_SIZE - 2)
 		)
-		_draw_enemy(enemy, enemy_rect)
+		_draw_enemy(enemy, enemy_rect, selected_pos)
 
 
 func _draw_migration_targets() -> void:
@@ -1947,18 +2995,13 @@ func _draw_selected_attack_range() -> void:
 		return
 	var selected_cell := get_cell(selected_pos)
 	var deity := selected_cell.deity as DeityInstance
-	var enemy := selected_cell.enemy as EnemyInstance
-	if not deity and not enemy:
+	if not deity:
 		return
 	var attack_range := (
 		float(deity_stats(selected_pos).range)
 			+ float(GameDefinitions.BALANCE.attack_range_tolerance)
 		if deity and deity.deity_type == GameDefinitions.DeityType.ATTACK
-		else (
-			float(GameDefinitions.BALANCE.resource_effect_range)
-			if deity
-			else 1.0
-		)
+		else float(deity_stats(selected_pos).range)
 	)
 	var reveal := clampf((pulse_time - range_reveal_started_at) / 0.34, 0.0, 1.0)
 	reveal = smoothstep(0.0, 1.0, reveal)
@@ -2000,6 +3043,26 @@ func _draw_selected_attack_range() -> void:
 			var color := Color(range_color, range_color.a * cell_reveal)
 			draw_rect(rect, color)
 			draw_rect(rect, Color(color, 0.55 * cell_reveal), false, 1.4)
+
+
+func _draw_large_domain_effects() -> void:
+	for deity_pos in get_all_deity_positions():
+		var deity := get_cell(deity_pos).deity as DeityInstance
+		if not deity or deity.large_skill_time <= 0.0:
+			continue
+		var color := (
+			Color(1.0, 0.82, 0.25, 0.18)
+			if get_cell(deity_pos).terrain == GameDefinitions.TerrainType.PLAIN
+			else Color(0.35, 0.9, 0.55, 0.16)
+		)
+		var wave := 0.45 + sin(pulse_time * 5.0) * 0.18
+		for region_pos in terrain_region(deity_pos):
+			var rect := Rect2(
+				grid_to_world(region_pos) + Vector2(3, 3),
+				Vector2(CELL_SIZE - 6, CELL_SIZE - 6)
+			)
+			draw_rect(rect, Color(color, color.a * wave))
+			draw_rect(rect, Color(color, 0.42), false, 1.5)
 
 
 func _draw_preview_routes() -> void:
@@ -2049,9 +3112,112 @@ func _preview_terrain_overrides() -> Dictionary:
 		return result
 	for offset in preview_terrain.rotated_shape(preview_rotation):
 		var pos := preview_pos + offset
-		if is_in_bounds(pos) and pos != core_pos and not is_enemy_core(pos):
+		if is_in_bounds(pos) and pos != core_pos and not is_enemy_core_slot(pos):
 			result[pos] = preview_terrain.terrain_type
 	return result
+
+
+func serialize_state() -> Dictionary:
+	var serialized_cells: Array = []
+	for cell in cells:
+		var deity := cell.deity as DeityInstance
+		var deity_data: Dictionary = {}
+		if deity:
+			deity_data = {
+				"type": deity.deity_type,
+				"hp": deity.hp,
+				"max_hp": deity.max_hp,
+				"action_timer": deity.action_timer,
+				"production_count": deity.production_count,
+				"attack_count": deity.attack_count,
+				"shield": deity.shield,
+				"level": deity.level,
+				"tracked_target_x": deity.tracked_target.x,
+				"tracked_target_y": deity.tracked_target.y,
+				"target_stacks": deity.target_stacks,
+				"target_idle_time": deity.target_idle_time,
+			}
+		serialized_cells.append({
+			"terrain": cell.terrain,
+			"pollution": cell.pollution,
+			"piece_id": cell.piece_id,
+			"anchor_terrain": cell.anchor_terrain,
+			"anchor_reward_claimed": cell.anchor_reward_claimed,
+			"was_collapsed": cell.was_collapsed,
+			"deity": deity_data,
+		})
+	var serialized_cores: Array = []
+	for pos in enemy_cores:
+		serialized_cores.append({
+			"x": pos.x,
+			"y": pos.y,
+			"data": (enemy_cores[pos] as Dictionary).duplicate(true),
+		})
+	return {
+		"cells": serialized_cells,
+		"enemy_cores": serialized_cores,
+		"enemy_core_activation_order": enemy_core_activation_order.duplicate(),
+		"enemy_core_forced_active_count": enemy_core_forced_active_count,
+		"next_piece_id": next_piece_id,
+	}
+
+
+func restore_state(state: Dictionary) -> bool:
+	var serialized_cells: Array = state.get("cells", [])
+	if serialized_cells.size() != GRID_W * GRID_H:
+		return false
+	reset_board()
+	for index in range(serialized_cells.size()):
+		var source: Dictionary = serialized_cells[index]
+		var cell := cells[index]
+		cell.terrain = int(source.get("terrain", GameDefinitions.TerrainType.NONE))
+		cell.pollution = int(source.get("pollution", 0))
+		cell.piece_id = int(source.get("piece_id", -1))
+		cell.anchor_terrain = int(source.get("anchor_terrain", GameDefinitions.TerrainType.NONE))
+		cell.anchor_reward_claimed = bool(source.get("anchor_reward_claimed", false))
+		cell.was_collapsed = bool(source.get("was_collapsed", false))
+		cell.enemy = null
+		cell.enemy_stack.clear()
+		var deity_data: Dictionary = source.get("deity", {})
+		if deity_data.is_empty():
+			cell.deity = null
+		else:
+			var deity := DeityInstance.create(int(deity_data.get("type", 0)))
+			deity.hp = int(deity_data.get("hp", deity.hp))
+			deity.max_hp = int(deity_data.get("max_hp", deity.max_hp))
+			deity.action_timer = float(deity_data.get("action_timer", 0.0))
+			deity.production_count = int(deity_data.get("production_count", 0))
+			deity.attack_count = int(deity_data.get("attack_count", 0))
+			deity.shield = float(deity_data.get("shield", 0.0))
+			deity.level = int(deity_data.get("level", 1))
+			deity.tracked_target = Vector2i(
+				int(deity_data.get("tracked_target_x", -1)),
+				int(deity_data.get("tracked_target_y", -1))
+			)
+			deity.target_stacks = int(deity_data.get("target_stacks", 0))
+			deity.target_idle_time = float(deity_data.get("target_idle_time", 0.0))
+			cell.deity = deity
+	enemy_cores.clear()
+	for entry_variant in state.get("enemy_cores", []):
+		var entry: Dictionary = entry_variant
+		var pos := Vector2i(int(entry.get("x", 0)), int(entry.get("y", 0)))
+		enemy_cores[pos] = (entry.get("data", {}) as Dictionary).duplicate(true)
+		get_cell(pos).terrain = GameDefinitions.TerrainType.NONE
+		get_cell(pos).piece_id = -1
+	enemy_core_activation_order.clear()
+	for value in state.get("enemy_core_activation_order", []):
+		enemy_core_activation_order.append(int(value))
+	enemy_core_forced_active_count = int(state.get(
+		"enemy_core_forced_active_count",
+		GameDefinitions.BALANCE.enemy_core_initial_active
+	))
+	next_piece_id = int(state.get("next_piece_id", 1))
+	selected_pos = Vector2i(-1, -1)
+	clear_preview()
+	recalculate_all_deities()
+	board_changed.emit()
+	queue_redraw()
+	return true
 
 
 func _draw_route_path(
@@ -2229,7 +3395,7 @@ func _draw_entities() -> void:
 				visual_grid * CELL_SIZE + Vector2.ONE,
 				Vector2(CELL_SIZE - 2, CELL_SIZE - 2)
 			)
-			_draw_enemy(enemy, visual_rect)
+			_draw_enemy(enemy, visual_rect, pos)
 
 
 func _smoothstep(value: float) -> float:
@@ -2370,6 +3536,8 @@ func _draw_deity(
 		_draw_damage_overlay(deity_rect, damage)
 		_draw_deity_level_visual(rect.get_center(), rect.size.x, deity.level, role_color)
 		_draw_health_bar(rect.get_center() + Vector2(0, 27), deity.hp, deity.max_hp, 40.0)
+		if deity.deity_type == GameDefinitions.DeityType.RESOURCE:
+			_draw_resource_production_progress(deity, grid_pos, rect)
 		return
 	var color := Color("f2b84b") if deity.deity_type == GameDefinitions.DeityType.ATTACK else Color("72e0ca")
 	draw_circle(rect.get_center(), 18.0, Color("171922"))
@@ -2377,6 +3545,29 @@ func _draw_deity(
 	draw_circle(rect.get_center(), 18.0, Color.WHITE, false, 2.0)
 	draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 11), "神%d" % deity.hp, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color.WHITE)
 	_draw_deity_level_visual(rect.get_center(), rect.size.x, deity.level, color)
+
+
+func _draw_resource_production_progress(
+	deity: DeityInstance,
+	grid_pos: Vector2i,
+	rect: Rect2
+) -> void:
+	var stats := deity_stats(grid_pos)
+	var interval := maxf(0.01, float(stats.get("interval", 1.0)))
+	var progress := clampf(1.0 - deity.action_timer / interval, 0.0, 1.0)
+	if TurnManager.current_phase != TurnManager.Phase.COMBAT:
+		progress = 0.0
+	var width := 38.0
+	var bar_rect := Rect2(
+		rect.get_center() + Vector2(-width * 0.5, 35.0),
+		Vector2(width, 4.0)
+	)
+	draw_rect(bar_rect, Color(0.03, 0.04, 0.05, 0.78))
+	draw_rect(bar_rect, Color(0.72, 0.91, 0.82, 0.5), false, 1.0)
+	var fill_rect := bar_rect.grow(-1.0)
+	fill_rect.size.x *= progress
+	if fill_rect.size.x > 0.5:
+		draw_rect(fill_rect, Color(0.28, 0.94, 0.76, 0.9))
 
 
 func _draw_deity_level_visual(center: Vector2, cell_width: float, level: int, role_color: Color) -> void:
@@ -2393,7 +3584,7 @@ func _draw_deity_level_visual(center: Vector2, cell_width: float, level: int, ro
 		draw_circle(marker_center, 3.8 if level == 2 else 4.8, Color(1.0, 0.9, 0.48, 0.95))
 
 
-func _draw_enemy(enemy: EnemyInstance, rect: Rect2) -> void:
+func _draw_enemy(enemy: EnemyInstance, rect: Rect2, grid_pos: Vector2i) -> void:
 	if AssetCatalog.texture("enemy_default") or AssetCatalog.animation("enemy_default"):
 		var wave := (sin(pulse_time * 1.55 + rect.position.x * 0.025) + 1.0) * 0.5
 		draw_circle(
@@ -2425,6 +3616,19 @@ func _draw_enemy(enemy: EnemyInstance, rect: Rect2) -> void:
 		)
 		_draw_damage_overlay(enemy_rect, damage)
 		_draw_health_bar(rect.get_center() + Vector2(0, 27), enemy.hp, enemy.max_hp, 38.0)
+		var stack_count := _enemies_at(grid_pos).size()
+		if stack_count > 1:
+			draw_string(
+				ThemeDB.fallback_font,
+				rect.get_center() + Vector2(15, -16),
+				"×%d" % stack_count,
+				HORIZONTAL_ALIGNMENT_LEFT,
+				-1,
+				12,
+				Color.WHITE
+			)
+		_draw_enemy_archetype_mark(enemy, rect.get_center())
+		_draw_enemy_status_marks(enemy, rect.get_center())
 		return
 	var pulse := (sin(pulse_time * 5.0) + 1.0) * 0.5
 	draw_circle(rect.get_center(), 20.0 + pulse * 2.0, Color(0.95, 0.15, 0.22, 0.2))
@@ -2432,6 +3636,68 @@ func _draw_enemy(enemy: EnemyInstance, rect: Rect2) -> void:
 	draw_line(rect.get_center() - Vector2(7, 7), rect.get_center() + Vector2(7, 7), Color.WHITE, 2.0)
 	draw_line(rect.get_center() + Vector2(7, -7), rect.get_center() + Vector2(-7, 7), Color.WHITE, 2.0)
 	draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 11), "敌%d" % enemy.hp, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color.WHITE)
+	_draw_enemy_status_marks(enemy, rect.get_center())
+
+
+func _draw_enemy_archetype_mark(enemy: EnemyInstance, center: Vector2) -> void:
+	var label := ""
+	var color := Color(0.9, 0.2, 0.25, 0.92)
+	match enemy.archetype:
+		"ranged":
+			label = "R"
+			color = Color(1.0, 0.62, 0.32, 0.94)
+		"flying":
+			label = "F"
+			color = Color(0.72, 0.86, 1.0, 0.94)
+		"swimmer":
+			label = "W"
+			color = Color(0.35, 0.78, 1.0, 0.94)
+		"forester":
+			label = "L"
+			color = Color(0.44, 0.9, 0.42, 0.94)
+		"swift":
+			label = "S"
+			color = Color(1.0, 0.92, 0.34, 0.94)
+		"brute":
+			label = "B"
+			color = Color(0.86, 0.42, 0.95, 0.94)
+		_:
+			return
+	var mark_center := center + Vector2(-19, -20)
+	draw_circle(mark_center, 7.2, Color(0.04, 0.04, 0.055, 0.86))
+	draw_circle(mark_center, 6.2, color)
+	draw_string(
+		ThemeDB.fallback_font,
+		mark_center + Vector2(-4.1, 4.2),
+		label,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		10,
+		Color(0.06, 0.045, 0.035, 0.98)
+	)
+
+
+func _draw_enemy_status_marks(enemy: EnemyInstance, center: Vector2) -> void:
+	var marks: Array[Color] = []
+	if enemy.slow_timer > 0.0:
+		marks.append(Color("72cfff"))
+	if enemy.freeze_time > 0.0:
+		marks.append(Color("d7f5ff"))
+	if enemy.vulnerable_time > 0.0:
+		marks.append(Color("ffbf65"))
+	if enemy.poison_time > 0.0:
+		marks.append(Color("8fd35b"))
+	if enemy.confusion_time > 0.0:
+		marks.append(Color("cf83ff"))
+	if enemy.silence_time > 0.0:
+		marks.append(Color("8d8a9f"))
+	for index in range(marks.size()):
+		var mark_center := center + Vector2(
+			(float(index) - float(marks.size() - 1) * 0.5) * 8.0,
+			-27.0
+		)
+		draw_circle(mark_center, 3.2, marks[index])
+		draw_circle(mark_center, 3.2, Color(0.05, 0.06, 0.08, 0.8), false, 1.0)
 
 
 func _draw_preview() -> void:

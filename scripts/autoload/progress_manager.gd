@@ -20,6 +20,7 @@ var completed_maps: int = 0
 var lifetime_stats: Dictionary = {}
 var current_planet_faces: Dictionary = {}
 var planet_history: Array = []
+var run_checkpoint: Dictionary = {}
 
 const MAX_MAPS := 6
 
@@ -30,6 +31,7 @@ func _ready() -> void:
 
 func begin_run() -> void:
 	_archive_current_planet()
+	run_checkpoint.clear()
 	current_map = 1
 	selected_blessing = ""
 	completed_maps = 0
@@ -160,6 +162,16 @@ func save_current_run() -> void:
 	_save()
 
 
+func store_run_checkpoint(checkpoint: Dictionary) -> void:
+	run_checkpoint = checkpoint.duplicate(true)
+	_save()
+
+
+func clear_run_checkpoint() -> void:
+	run_checkpoint.clear()
+	_save()
+
+
 func unlock(id: String) -> void:
 	if bool(achievements.get(id, false)):
 		return
@@ -211,6 +223,7 @@ func _save() -> void:
 			"lifetime_stats": lifetime_stats,
 			"current_planet_faces": current_planet_faces,
 			"planet_history": planet_history,
+			"run_checkpoint": run_checkpoint,
 		}))
 
 
@@ -229,3 +242,4 @@ func _load_save() -> void:
 		lifetime_stats = (parsed as Dictionary).get("lifetime_stats", {})
 		current_planet_faces = (parsed as Dictionary).get("current_planet_faces", {})
 		planet_history = (parsed as Dictionary).get("planet_history", [])
+		run_checkpoint = (parsed as Dictionary).get("run_checkpoint", {})

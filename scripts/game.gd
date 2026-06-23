@@ -22,10 +22,12 @@ func _ready() -> void:
 	grid_map.placement_finished.connect(_on_placement_finished)
 	grid_map.map_completed.connect(_on_map_completed)
 	grid_map.enemy_core_destroyed.connect(_on_enemy_core_destroyed)
+	grid_map.board_changed.connect(_save_checkpoint_if_possible)
 	TurnManager.build_started.connect(_on_build_started)
 	TurnManager.combat_started.connect(_on_combat_started)
 	TurnManager.combat_ended.connect(_on_combat_ended)
 	start_screen.start_requested.connect(_start_new_game)
+	start_screen.load_requested.connect(_load_saved_game)
 	game_ui.continue_requested.connect(_show_blessings)
 	game_ui.blessing_selected.connect(_start_second_map)
 	game_ui.menu_requested.connect(_return_to_menu)
@@ -81,7 +83,61 @@ func _on_build_started() -> void:
 	CardManager.begin_build_phase()
 	if ProgressManager.blessing_value("build_free_refresh") > 0.0:
 		free_refreshes = maxi(free_refreshes, 1)
+	_save_checkpoint_if_possible()
 	GameManager.post_message("建设阶段：购买地块、规划地形并安置神祇")
+
+
+func _save_checkpoint_if_possible() -> void:
+	if (
+		not GameManager.is_game_running
+		or TurnManager.current_phase != TurnManager.Phase.BUILD
+		or not is_instance_valid(grid_map)
+	):
+		return
+	ProgressManager.store_run_checkpoint({
+		"map": ProgressManager.current_map,
+		"round": GameManager.current_round,
+		"core_hp": GameManager.core_hp,
+		"core_max_hp": GameManager.core_max_hp,
+		"divine_power": ResourceManager.divine_power,
+		"free_refreshes": free_refreshes,
+		"built_attack_deities": built_attack_deities,
+		"built_resource_deities": built_resource_deities,
+		"selected_blessing": ProgressManager.selected_blessing,
+		"stats": ProgressManager.stats.duplicate(true),
+		"run_elapsed": ProgressManager.run_elapsed_seconds(),
+		"map_elapsed": ProgressManager.map_elapsed_seconds(),
+		"map_state": grid_map.serialize_state(),
+	})
+
+
+func _load_saved_game() -> void:
+	var checkpoint := ProgressManager.run_checkpoint.duplicate(true)
+	if checkpoint.is_empty():
+		return
+	ProgressManager.current_map = int(checkpoint.get("map", 1))
+	ProgressManager.selected_blessing = str(checkpoint.get("selected_blessing", ""))
+	ProgressManager.stats = (checkpoint.get("stats", {}) as Dictionary).duplicate(true)
+	var now := Time.get_ticks_msec()
+	ProgressManager.run_started_msec = now - roundi(float(checkpoint.get("run_elapsed", 0.0)) * 1000.0)
+	ProgressManager.map_started_msec = now - roundi(float(checkpoint.get("map_elapsed", 0.0)) * 1000.0)
+	GameManager.start_game()
+	GameManager.current_round = int(checkpoint.get("round", 1))
+	GameManager.core_max_hp = int(checkpoint.get("core_max_hp", 30))
+	GameManager.core_hp = int(checkpoint.get("core_hp", GameManager.core_max_hp))
+	ResourceManager.divine_power = float(checkpoint.get("divine_power", 0.0))
+	ResourceManager.resources_changed.emit()
+	free_refreshes = int(checkpoint.get("free_refreshes", 0))
+	built_attack_deities = int(checkpoint.get("built_attack_deities", 0))
+	built_resource_deities = int(checkpoint.get("built_resource_deities", 0))
+	var map_state: Dictionary = checkpoint.get("map_state", {})
+	if not grid_map.restore_state(map_state):
+		_start_new_game()
+		return
+	AudioManager.play_music("music_build", -9.0)
+	TurnManager.enter_build_phase()
+	_reveal_gameplay()
+	GameManager.state_changed.emit()
 
 
 func purchase_shop_card(index: int) -> void:
@@ -190,6 +246,10 @@ func _on_combat_ended(_round_number: int) -> void:
 	var income := float(GameDefinitions.BALANCE.combat_base_income)
 	ResourceManager.add_divine_power(income)
 	ProgressManager.add_stat("base_income", income)
+	var interest := grid_map.collect_abundance_interest()
+	grid_map.reset_large_domain_state()
+	if interest > 0.0:
+		GameManager.post_message("丰饶神利息：+%.1f 神力" % interest)
 	GameManager.post_message("中央核心稳定产出 %.1f 神力" % income)
 
 
@@ -220,6 +280,7 @@ func _reveal_gameplay() -> void:
 
 func _on_map_completed() -> void:
 	TurnManager.finish_game()
+	ProgressManager.clear_run_checkpoint()
 	var snapshot := _build_result_snapshot()
 	var result := ProgressManager.register_map_result(ProgressManager.current_map, snapshot)
 	game_ui.show_map_result(
@@ -235,6 +296,7 @@ func _on_game_over(victory: bool) -> void:
 	ProgressManager.save_current_run()
 	if victory:
 		return
+	ProgressManager.clear_run_checkpoint()
 	game_ui.show_failure()
 
 
@@ -314,7 +376,7 @@ func cheat_fill_map() -> void:
 	for y in range(grid_map.GRID_H):
 		for x in range(grid_map.GRID_W):
 			var pos := Vector2i(x, y)
-			if pos == grid_map.core_pos or grid_map.is_enemy_core(pos):
+			if pos == grid_map.core_pos or grid_map.is_enemy_core_slot(pos):
 				continue
 			var cell := grid_map.get_cell(pos)
 			if cell.terrain == GameDefinitions.TerrainType.NONE:
@@ -334,11 +396,7 @@ func cheat_fill_map() -> void:
 	grid_map._check_victory()
 
 
-func deity_cost_modifier(deity_type: int) -> float:
-	if deity_type == GameDefinitions.DeityType.ATTACK and built_attack_deities == 0:
-		return -ProgressManager.blessing_value("first_attack_discount")
-	if deity_type == GameDefinitions.DeityType.RESOURCE and built_resource_deities == 0:
-		return -ProgressManager.blessing_value("first_resource_discount")
+func deity_cost_modifier(_deity_type: int) -> float:
 	return 0.0
 
 

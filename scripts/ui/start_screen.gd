@@ -2,6 +2,7 @@ class_name StartScreen
 extends Control
 
 signal start_requested
+signal load_requested
 
 const PlanetCubeViewScript := preload("res://scripts/ui/planet_cube_view.gd")
 const MenuAmbientScript := preload("res://scripts/ui/menu_ambient.gd")
@@ -127,19 +128,19 @@ func _build_menu() -> void:
 	_move_tutorial_ring(primary_help_button)
 
 	var left_footer := HBoxContainer.new()
-	left_footer.position = Vector2(34, 875)
+	left_footer.position = Vector2(60, 875)
 	left_footer.add_theme_constant_override("separation", 14)
 	add_child(left_footer)
 	_add_home_page_button(left_footer, "本地统计", "button_home_stats", "icon_stats", "stats")
 	_add_home_page_button(left_footer, "本地排行", "button_home_leaderboard", "icon_leaderboard", "leaderboard")
 
 	var center_footer := HBoxContainer.new()
-	center_footer.position = Vector2(754, 875)
+	center_footer.position = Vector2(914, 875)
 	add_child(center_footer)
 	_add_home_page_button(center_footer, "设置", "button_settings", "icon_settings", "settings")
 
 	var right_footer := HBoxContainer.new()
-	right_footer.position = Vector2(1370, 875)
+	right_footer.position = Vector2(1660, 875)
 	right_footer.add_theme_constant_override("separation", 14)
 	add_child(right_footer)
 	_add_home_page_button(right_footer, "图鉴", "button_home_codex", "icon_codex", "codex")
@@ -184,7 +185,7 @@ func _create_home_overlay() -> void:
 	add_child(home_modal_blocker)
 	home_overlay = PanelContainer.new()
 	home_overlay.visible = false
-	home_overlay.position = Vector2(330, 100)
+	home_overlay.position = Vector2(490, 100)
 	home_overlay.size = Vector2(940, 800)
 	home_overlay.z_index = 20
 	AssetCatalog.apply_panel_background(home_overlay, "stats_background")
@@ -207,7 +208,7 @@ func _show_home_page(page: String) -> void:
 	var right_margin := 138 if page == "codex" else (70 if page == "planet" else 92)
 	safe_area.add_theme_constant_override("margin_left", left_margin)
 	safe_area.add_theme_constant_override("margin_right", right_margin)
-	safe_area.add_theme_constant_override("margin_top", 94)
+	safe_area.add_theme_constant_override("margin_top", 70 if page == "codex" else 94)
 	safe_area.add_theme_constant_override("margin_bottom", 84)
 	home_overlay.add_child(safe_area)
 	var root := VBoxContainer.new()
@@ -228,7 +229,7 @@ func _show_home_page(page: String) -> void:
 		"codex": _build_codex_page(root)
 	var close := Button.new()
 	close.text = "返回"
-	close.position = Vector2(1480, 20)
+	close.position = Vector2(1600, 20)
 	close.size = Vector2(96, 96)
 	close.custom_minimum_size = Vector2(96, 96)
 	close.z_index = 22
@@ -398,6 +399,18 @@ func _build_planet_page(parent: VBoxContainer) -> void:
 	status.add_theme_color_override("font_outline_color", Color(0.04, 0.025, 0.02, 0.96))
 	status.add_theme_constant_override("outline_size", 4)
 	parent.add_child(status)
+	if not ProgressManager.run_checkpoint.is_empty():
+		var continue_button := Button.new()
+		continue_button.text = "继续当前星球"
+		continue_button.custom_minimum_size = Vector2(190, 48)
+		AssetCatalog.apply_button_visual(continue_button)
+		continue_button.pressed.connect(func() -> void:
+			AudioManager.play_sfx_first(["button_start", "purchase"], -2.0)
+			AudioManager.stop_music()
+			load_requested.emit()
+			queue_free()
+		)
+		parent.add_child(continue_button)
 
 
 func _build_home_settings_page(parent: VBoxContainer) -> void:
@@ -432,6 +445,28 @@ func _build_home_settings_page(parent: VBoxContainer) -> void:
 		AudioManager.set_music_volume(value / 100.0)
 	)
 	parent.add_child(volume)
+	var fullscreen := Button.new()
+	fullscreen.custom_minimum_size = Vector2(150, 42)
+	fullscreen.text = "窗口" if _is_fullscreen() else "全屏"
+	AssetCatalog.apply_button_visual(fullscreen)
+	fullscreen.pressed.connect(func() -> void:
+		_toggle_fullscreen()
+		fullscreen.text = "窗口" if _is_fullscreen() else "全屏"
+	)
+	parent.add_child(fullscreen)
+
+
+func _is_fullscreen() -> bool:
+	var mode := DisplayServer.window_get_mode()
+	return mode == DisplayServer.WINDOW_MODE_FULLSCREEN or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+
+
+func _toggle_fullscreen() -> void:
+	DisplayServer.window_set_mode(
+		DisplayServer.WINDOW_MODE_WINDOWED
+		if _is_fullscreen()
+		else DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	)
 
 
 func _build_codex_page(parent: VBoxContainer) -> void:
@@ -439,7 +474,7 @@ func _build_codex_page(parent: VBoxContainer) -> void:
 	var codex_heading := parent.get_child(parent.get_child_count() - 1) as Label
 	codex_heading.add_theme_color_override("font_color", Color("f3dfb7"))
 	var heading_spacer := Control.new()
-	heading_spacer.custom_minimum_size = Vector2(1, 16)
+	heading_spacer.custom_minimum_size = Vector2(1, 4)
 	parent.add_child(heading_spacer)
 	var terrains := [
 		GameDefinitions.TerrainType.PLAIN,
@@ -448,7 +483,7 @@ func _build_codex_page(parent: VBoxContainer) -> void:
 		GameDefinitions.TerrainType.RIVER,
 	]
 	var page_host := Control.new()
-	page_host.custom_minimum_size = Vector2(660, 350)
+	page_host.custom_minimum_size = Vector2(660, 390)
 	parent.add_child(page_host)
 	var pages: Array[Control] = []
 	for terrain in terrains:
@@ -497,6 +532,9 @@ func _build_codex_page(parent: VBoxContainer) -> void:
 	)
 	glossary_page.add_child(right_glossary)
 	pages.append(glossary_page)
+	var navigation_spacer := Control.new()
+	navigation_spacer.custom_minimum_size = Vector2(1, 16)
+	parent.add_child(navigation_spacer)
 	var state := {"index": 0}
 	var navigation := HBoxContainer.new()
 	navigation.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -538,10 +576,10 @@ func _build_codex_column(parent: HBoxContainer, terrain: int, role: int) -> void
 	column.add_theme_constant_override("separation", 8)
 	parent.add_child(column)
 	var top_spacer := Control.new()
-	top_spacer.custom_minimum_size = Vector2(1, 8)
+	top_spacer.custom_minimum_size = Vector2(1, 0)
 	column.add_child(top_spacer)
 	var title := Label.new()
-	title.text = str(GameDefinitions.DEITY_FORM_NAMES[terrain][role])
+	title.text = str(GameDefinitions.REWORKED_DEITY_FORM_NAMES[terrain][role])
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 20)
 	title.add_theme_color_override("font_color", Color("442612"))
@@ -554,47 +592,65 @@ func _build_codex_column(parent: HBoxContainer, terrain: int, role: int) -> void
 	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	column.add_child(image)
 	var text_margin := MarginContainer.new()
-	text_margin.add_theme_constant_override("margin_left", 52)
-	text_margin.add_theme_constant_override("margin_right", 6)
+	text_margin.add_theme_constant_override("margin_left", 76)
+	text_margin.add_theme_constant_override("margin_right", 0)
 	column.add_child(text_margin)
 	var text := Label.new()
-	text.custom_minimum_size = Vector2(218, 188)
+	text.custom_minimum_size = Vector2(190, 188)
 	text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	text.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	text.add_theme_font_size_override("font_size", 14)
 	text.add_theme_color_override("font_color", Color("51321d"))
-	text.text = "%s\n\n%s\n\n迁移：建设阶段可在同一神域内移动并保留状态。" % [
-		"神域面积提高基础伤害。" if role == GameDefinitions.DeityType.ATTACK else "神域面积提高基础神力产量。",
+	text.text = "%s\n\n%s\n\n主动技能：%s" % [
+		"普通属性只由升级提高；神域面积达到阈值后解锁主动技能。",
 		_codex_bonus_text(terrain, role),
+		_codex_large_skill_text(terrain, role),
 	]
 	text_margin.add_child(text)
+
+
+func _codex_large_skill_text(terrain: int, role: int) -> String:
+	match terrain:
+		GameDefinitions.TerrainType.PLAIN:
+			return (
+				"一望无垠——整片平原暂时成为攻击起点。"
+				if role == GameDefinitions.DeityType.ATTACK
+				else "一望无垠——整片平原暂时成为治疗起点。"
+			)
+		GameDefinitions.TerrainType.MOUNTAIN:
+			return "地壳隆起——周围合法地形暂时变为山地。"
+		GameDefinitions.TerrainType.RIVER:
+			return "洪流——河流向外扩展并淹没或重伤敌人。"
+		GameDefinitions.TerrainType.FOREST:
+			return "迷林徘徊——森林内敌人每步随机改向，撞上硬障碍后反弹。"
+	return ""
 
 
 func _codex_bonus_text(terrain: int, role: int) -> String:
 	match terrain:
 		GameDefinitions.TerrainType.PLAIN:
 			return (
-				"功能：快速直线攻击；特殊攻击进行连续射击。\n共鸣：相邻且拥有存活神祇、面积至少 2 格的平原神域，使基础攻击间隔缩短。"
+				"疾野神：高速单体攻击。\n邻接山地：同目标连射逐渐增伤。\n邻接河流：同目标连射逐渐加速。\n邻接森林：新目标首击造成三倍伤害。"
 				if role == GameDefinitions.DeityType.ATTACK
-				else "功能：基础生产较快；特殊生产额外进行一次基础生产。\n共鸣：相邻有效平原神域使基础生产间隔缩短。"
+				else "盎然神：优先治疗生命比例最低的友军。\n邻接山地：治疗附加护盾。\n邻接河流：治疗向附近友军扩散。\n邻接森林：治疗附加短暂减伤。"
 			)
 		GameDefinitions.TerrainType.FOREST:
 			return (
-				"功能：追踪攻击并减速；特殊攻击强化减速并自愈一次。\n共鸣：相邻有效森林神域提高最大生命、治疗与护盾效果。"
+				"蛊郁神：直接攻击并施加持续中毒。\n邻接平原：中毒可以叠层。\n邻接山地：每层毒伤提高。\n邻接河流：中毒敌人死亡时传播毒素。"
 				if role == GameDefinitions.DeityType.ATTACK
-				else "功能：特殊生产释放生命绽放，治疗相邻神域神祇，溢出治疗转为有限护盾。\n共鸣：相邻有效森林神域提高最大生命、治疗与护盾效果。"
+				else "丰饶神：周期生产神力。\n邻接平原：战斗结束结算有限利息。\n邻接山地：敌人有其他路线时尽量绕开。\n邻接河流：生产时可能获得免费刷新。"
 			)
 		GameDefinitions.TerrainType.MOUNTAIN:
 			return (
-				"功能：优先炮击射程内最远目标，危险敌人优先；抛物线弹道并造成溅射。\n共鸣：相邻有效山地神域提高攻击射程。"
+				"轰爆神：优先炮击远处或危险目标并造成范围伤害。\n每邻接一种平原、河流或森林神域，爆炸范围扩大一次。"
 				if role == GameDefinitions.DeityType.ATTACK
-				else "功能：生产较慢、单次产量较高；特殊生产获得额外神力。\n共鸣：相邻有效山地神域提高单次基础产量。"
+				else "泞滞神：周期攻击并使敌人减速。\n邻接平原：减速叠层后冻结。\n邻接河流：单层减速增强。\n邻接森林：减速同时附加易伤。"
 			)
 		GameDefinitions.TerrainType.RIVER:
 			return (
-				"功能：攻击弹射；特殊攻击增加弹射次数。\n共鸣：相邻有效河流神域减少特殊攻击所需普通攻击次数。"
+				"澜沧神：攻击命中后在敌人之间弹射。\n邻接平原：弹射搜索距离增加。\n邻接山地：一次命中分裂到更多敌人。\n邻接森林：总弹射次数增加。"
 				if role == GameDefinitions.DeityType.ATTACK
-				else "功能：特殊生产获得一次免费商店刷新。\n共鸣：相邻有效河流神域减少特殊生产所需次数；不再返还建造神力。"
+				else "漩涡神：周期吸引附近敌人。\n邻接平原：可能短暂策反普通敌人。\n邻接山地：可能将敌人向外抛离。\n邻接森林：可能使敌人沉默。"
 			)
 	return ""
 
@@ -609,7 +665,7 @@ func _create_help_panel() -> void:
 	add_child(help_modal_blocker)
 	help_panel = PanelContainer.new()
 	help_panel.visible = false
-	help_panel.position = Vector2(230, 70)
+	help_panel.position = Vector2(390, 70)
 	help_panel.size = Vector2(1140, 850)
 	help_panel.z_index = 10
 	AssetCatalog.apply_panel_background(help_panel, "help_background")
@@ -623,7 +679,7 @@ func _create_help_panel() -> void:
 	root.add_child(spacer)
 	var close := Button.new()
 	close.text = "返回"
-	close.position = Vector2(1480, 20)
+	close.position = Vector2(1600, 20)
 	close.size = Vector2(96, 96)
 	close.custom_minimum_size = Vector2(96, 96)
 	close.visible = false

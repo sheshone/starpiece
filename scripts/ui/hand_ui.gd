@@ -31,11 +31,11 @@ func _show_shop(slots: Array) -> void:
 		return
 	var scene: PackedScene = load("res://scenes/ui/card_display.tscn")
 	var card_positions := [
-		Vector2(1500, 70),
-		Vector2(1370, 235),
-		Vector2(1310, 430),
-		Vector2(1370, 625),
-		Vector2(1500, 790),
+		Vector2(1600, 70),
+		Vector2(1470, 235),
+		Vector2(1410, 430),
+		Vector2(1470, 625),
+		Vector2(1600, 790),
 	]
 	for i in range(CardManager.SHOP_SIZE):
 		if i < slots.size() and slots[i] != null:
@@ -77,7 +77,7 @@ func _show_shop(slots: Array) -> void:
 			empty.add_child(empty_art)
 			add_child(empty)
 			shop_nodes.append(empty)
-	_build_shop_controls(Vector2(1580, 282), Vector2(1580, 650))
+	_build_shop_controls(Vector2(1680, 282), Vector2(1680, 650))
 
 
 func _purchase(index: int) -> void:
@@ -88,7 +88,7 @@ func _purchase(index: int) -> void:
 func _build_shop_controls(refresh_position: Vector2, migrate_position: Vector2) -> void:
 	var controls := Control.new()
 	controls.position = Vector2.ZERO
-	controls.size = Vector2(1800, 1000)
+	controls.size = Vector2(1920, 1000)
 	controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(controls)
 	shop_controls.append(controls)

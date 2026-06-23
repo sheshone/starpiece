@@ -12,6 +12,12 @@ extends Resource
 @export var visual_animation: String = "idle"
 @export var visual_animation_started_at: float = 0.0
 @export var visual_animation_duration: float = 0.0
+@export var tracked_target: Vector2i = Vector2i(-1, -1)
+@export var target_stacks: int = 0
+@export var target_idle_time: float = 0.0
+@export var large_skill_used: bool = false
+@export var large_skill_time: float = 0.0
+@export var combat_interest_base: float = 0.0
 
 
 static func create(type: int) -> DeityInstance:

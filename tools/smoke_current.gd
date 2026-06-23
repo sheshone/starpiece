@@ -57,6 +57,65 @@ func _run() -> void:
 			_fail("shop control layer blocks card or time-flow input")
 			return
 	var map := game.get_node("GameMap")
+	if not is_equal_approx(float(map.domain_area_multiplier(10)), 1.0):
+		_fail("domain area still changes ordinary attributes")
+		return
+	if str(Definitions.REWORKED_DEITY_FORM_NAMES[Definitions.TerrainType.PLAIN][Definitions.DeityType.ATTACK]) != "疾野神":
+		_fail("reworked deity names are not active")
+		return
+	if str(Definitions.REWORKED_DEITY_FORM_NAMES[Definitions.TerrainType.MOUNTAIN][Definitions.DeityType.RESOURCE]) != "泞滞神":
+		_fail("mountain support deity name is not active")
+		return
+	if str(Definitions.REWORKED_DEITY_FORM_NAMES[Definitions.TerrainType.RIVER][Definitions.DeityType.ATTACK]) != "澜沧神":
+		_fail("river attack deity name is not active")
+		return
+	if not bool(map.call("_can_relocate_enemy_to", Vector2i(1, 1))):
+		_fail("enemy cannot walk through chaos cells")
+		return
+	if not bool(map.call("_can_relocate_enemy_to", Vector2i(1, 1), true)):
+		_fail("legacy placed-terrain flag still rejects chaos cells")
+		return
+	if not bool(map.call("_can_relocate_enemy_to", Vector2i(1, 1), false, true)):
+		_fail("chaos cell is not accepted as a river bank")
+		return
+	map.get_cell(Vector2i(1, 1)).terrain = Definitions.TerrainType.RIVER
+	if bool(map.call("_can_relocate_enemy_to", Vector2i(1, 1), false, true)):
+		_fail("river cell is incorrectly accepted as its own bank")
+		return
+	map.get_cell(Vector2i(1, 1)).terrain = Definitions.TerrainType.NONE
+	var stack_pos := Vector2i(1, 1)
+	var stack_enemy_a := EnemyData.create(1)
+	var stack_enemy_b := EnemyData.create(1)
+	map.call("_add_enemy_to_cell", stack_pos, stack_enemy_a)
+	map.call("_add_enemy_to_cell", stack_pos, stack_enemy_b)
+	if (map.call("_enemies_at", stack_pos) as Array).size() != 2:
+		_fail("enemies cannot stack in one cell")
+		return
+	map.call("_remove_enemy_from_cell", stack_pos, stack_enemy_a)
+	map.call("_remove_enemy_from_cell", stack_pos, stack_enemy_b)
+	var bounce_origin := Vector2i(3, 3)
+	var bounce_enemy := EnemyData.create(1)
+	map.call("_add_enemy_to_cell", bounce_origin, bounce_enemy)
+	map.get_cell(bounce_origin + Vector2i.RIGHT).terrain = Definitions.TerrainType.MOUNTAIN
+	var bounced := Vector2i(map.call(
+		"_forced_move_with_bounce",
+		bounce_origin,
+		Vector2i.RIGHT,
+		bounce_enemy,
+		"knockback"
+	))
+	if bounced == bounce_origin or bounced == bounce_origin + Vector2i.RIGHT:
+		_fail("forced movement did not bounce away from a hard obstacle")
+		return
+	map.call("_remove_enemy_from_cell", bounced, bounce_enemy)
+	map.get_cell(bounce_origin + Vector2i.RIGHT).terrain = Definitions.TerrainType.NONE
+	if (
+		float(Definitions.BALANCE.terrain_path_cost[Definitions.TerrainType.PLAIN]) != 1.0
+		or float(Definitions.BALANCE.terrain_path_cost[Definitions.TerrainType.RIVER]) != 1.0
+		or float(Definitions.BALANCE.terrain_path_cost[Definitions.TerrainType.FOREST]) != 1.0
+	):
+		_fail("non-mountain terrain still has weighted path cost")
+		return
 	var source: Vector2i = Vector2i(map.core_pos) + Vector2i.RIGHT
 	var target: Vector2i = source + Vector2i.RIGHT
 	for pos in [source, target]:
@@ -95,6 +154,12 @@ func _run() -> void:
 		_fail("deity removal charged the wrong cost")
 		return
 	map.get_cell(source).enemy = EnemyData.create(1)
+	map.get_cell(source).enemy.hp = 10
+	map.get_cell(source).enemy.max_hp = 10
+	map.call("_damage_enemy", source, 4, target, Color.WHITE, "deity_plain")
+	if int(map.get_cell(source).enemy.hp) >= 6:
+		_fail("plain exposure did not increase incoming damage")
+		return
 	if bool(game.call("can_end_combat")):
 		_fail("combat can end while an enemy remains")
 		return

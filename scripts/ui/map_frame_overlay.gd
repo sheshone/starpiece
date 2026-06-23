@@ -20,7 +20,7 @@ func _draw() -> void:
 		texture = AssetCatalog.texture("map_frame")
 	if texture:
 		# 原图内部安全区约为 50..950。映射后恰好包住 903×903 的地图。
-		draw_texture_rect(texture, Rect2(300, 12, 1003, 1003), false)
+		draw_texture_rect(texture, Rect2(360, 12, 1003, 1003), false)
 
 
 func _animation_frame() -> Texture2D:
