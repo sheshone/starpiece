@@ -135,14 +135,6 @@ func _build_edge_hud() -> void:
 	start_button.tooltip_text = "时间流动：进入自动战斗阶段"
 	AssetCatalog.apply_button_visual(start_button, "icon_time_flow", true)
 	start_button.pivot_offset = start_button.size * 0.5
-	var flow_tween := create_tween().set_loops()
-	flow_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	flow_tween.tween_interval(1.15)
-	flow_tween.tween_property(start_button, "scale", Vector2(1.055, 1.055), 0.13)
-	flow_tween.tween_property(start_button, "scale", Vector2.ONE, 0.17)
-	flow_tween.tween_interval(0.08)
-	flow_tween.tween_property(start_button, "scale", Vector2(1.035, 1.035), 0.1)
-	flow_tween.tween_property(start_button, "scale", Vector2.ONE, 0.16)
 	menu_button = _make_button("设置", self, _toggle_settings)
 	menu_button.position = Vector2(1410, 24)
 	menu_button.size = Vector2(72, 72)
@@ -1053,10 +1045,11 @@ func _create_tutorial_panel() -> void:
 
 	tutorial_panel = PanelContainer.new()
 	tutorial_panel.visible = false
-	tutorial_panel.position = Vector2(366, 76)
-	tutorial_panel.size = Vector2(470, 138)
+	tutorial_panel.position = Vector2(1310, 124)
+	tutorial_panel.size = Vector2(520, 118)
 	tutorial_panel.z_index = 175
 	tutorial_panel.process_mode = Node.PROCESS_MODE_ALWAYS
+	tutorial_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var transparent := StyleBoxFlat.new()
 	transparent.bg_color = Color(0.025, 0.04, 0.06, 0.58)
 	transparent.border_color = Color(0.72, 0.52, 0.30, 0.82)
@@ -1077,7 +1070,7 @@ func _create_tutorial_panel() -> void:
 	tutorial_label = Label.new()
 	tutorial_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tutorial_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	tutorial_label.add_theme_font_size_override("font_size", 20)
+	tutorial_label.add_theme_font_size_override("font_size", 24)
 	tutorial_label.add_theme_color_override("font_color", Color("f0e5d0"))
 	tutorial_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	safe_area.add_child(tutorial_label)
@@ -1447,16 +1440,12 @@ func show_tutorial_step(step: Dictionary) -> void:
 	var serial := tutorial_hide_serial
 	show_tutorial(str(step.get("text", "")))
 	_show_tutorial_highlight(step)
-	tutorial_previous_pause = get_tree().paused
 	tutorial_previous_time_scale = Engine.time_scale
-	tutorial_active_pause = bool(step.get("pause", false))
+	tutorial_active_pause = false
 	var slow_motion := float(step.get("slow_motion", 1.0))
 	if slow_motion > 0.0 and slow_motion < 1.0:
 		Engine.time_scale = slow_motion
-	tutorial_continue_button.visible = tutorial_active_pause
-	if tutorial_active_pause:
-		get_tree().paused = true
-		return
+	tutorial_continue_button.visible = false
 	var duration := float(step.get("duration", 0.0))
 	if duration > 0.0:
 		var tween := create_tween()

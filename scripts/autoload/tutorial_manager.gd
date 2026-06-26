@@ -4,7 +4,7 @@ signal tutorial_requested(step: Dictionary)
 signal tutorial_cleared
 
 const TutorialDefinitionsScript := preload("res://scripts/data/tutorial_definitions.gd")
-const TUTORIAL_VERSION_PREFIX := "guide_v6:"
+const TUTORIAL_VERSION_PREFIX := "guide_v7:"
 
 var active_step: Dictionary = {}
 var pending_steps: Array[Dictionary] = []
@@ -30,6 +30,8 @@ func trigger(trigger_name: String, payload: Dictionary = {}) -> bool:
 		if payload.has("tutorial_text"):
 			prepared["text"] = str(payload.get("tutorial_text", prepared.get("text", "")))
 		if active_step.is_empty():
+			_activate(prepared)
+		elif bool(active_step.get("non_blocking", false)) or not bool(active_step.get("pause", false)):
 			_activate(prepared)
 		else:
 			pending_steps.append(prepared)

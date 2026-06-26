@@ -2,9 +2,8 @@ class_name TutorialDefinitions
 extends RefCounted
 
 # 触发式新手引导数据。
-# 不做独立教程模式；这些提示直接融入前期关卡。
-# terrain: PLAIN=1, FOREST=2, MOUNTAIN=3, RIVER=4
-# deity_type: ATTACK=0, RESOURCE=1
+# 不做独立教程模式；提示直接融入前期关卡。
+# 所有提示默认不暂停游戏，只作为右上角浮层与高亮出现。
 
 const DEITY_ATTACK := 0
 const DEITY_RESOURCE := 1
@@ -13,340 +12,297 @@ const TERRAIN_FOREST := 2
 const TERRAIN_MOUNTAIN := 3
 const TERRAIN_RIVER := 4
 
-const STEPS: Array[Dictionary] = [
-	{
+const DEFAULT_DURATION := 5.2
+
+
+static func step(data: Dictionary) -> Dictionary:
+	var result := data.duplicate(true)
+	result["pause"] = false
+	result["non_blocking"] = true
+	if not result.has("duration"):
+		result["duration"] = DEFAULT_DURATION
+	if not result.has("once"):
+		result["once"] = true
+	return result
+
+
+static var STEPS: Array[Dictionary] = [
+	step({
 		"id": "prologue_start",
 		"map": 0,
 		"trigger": "level_started",
-		"text": "使用神力从右侧购买一张单格平原。敌方核心只差一个缺口就会被包围。",
-		"highlight": ["shop_card"],
-		"pause": true,
-		"once": true,
-	},
-	{
-		"id": "first_card_purchased",
-		"trigger": "terrain_card_purchased",
-		"text": "把地块放到发光的合法位置。地块必须上下左右连接中央核心或已有领地，不能重叠。中央核心每轮战斗结束都会补充基础神力。",
-		"highlight": ["placement_cells"],
-		"pause": true,
-		"once": true,
-	},
-	{
-		"id": "prologue_tile_placed",
-		"map": 0,
-		"trigger": "prologue_tile_placed",
-		"text": "缺口已经补好。点击靠近敌方核心的平原格，安置一位疾野神；同一连通神域只能拥有一位神祇。",
+		"text": "欢迎来到拼星！看到这些格子了吗？点击格子，安置神祇！",
 		"highlight": ["domain"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "prologue_deity_ready",
 		"map": 0,
 		"trigger": "deity_built",
 		"terrain": TERRAIN_PLAIN,
 		"deity_type": DEITY_ATTACK,
-		"text": "疾野神已经安置完成。点击时间流动，让祂摧毁被围住的敌方核心。",
+		"text": "你成功安置了一位疾野神！祂会守护你的核心。",
+		"highlight": ["deity"],
+	}),
+	step({
+		"id": "prologue_enemy_core_unsealed",
+		"map": 0,
+		"trigger": "prologue_enemy_core_unsealed",
+		"text": "敌人的核心还没有被包围。敌方核心被围起来时，才会被神祇攻击！",
+		"highlight": ["enemy_core"],
+	}),
+	step({
+		"id": "prologue_buy_tile",
+		"map": 0,
+		"trigger": "prologue_buy_tile",
+		"text": "消耗神力来购买并放置地块吧！把敌人的核心围起来。你的地块必须挨着已有领地。",
+		"highlight": ["shop_card"],
+	}),
+	step({
+		"id": "first_card_purchased",
+		"trigger": "terrain_card_purchased",
+		"text": "把地块放在发光的合法位置。地块必须上下左右连接核心或已有领地。",
+		"highlight": ["placement_cells"],
+	}),
+	step({
+		"id": "prologue_tile_placed",
+		"map": 0,
+		"trigger": "prologue_tile_placed",
+		"text": "缺口已经补好，现在让时间流动起来吧！",
 		"highlight": ["time_button"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
+		"id": "prologue_combat_started",
+		"map": 0,
+		"trigger": "combat_started",
+		"text": "敌方将向核心推进。摧毁全部敌方核心即可获胜；中央核心生命归零则失败。",
+		"highlight": ["enemy_core"],
+	}),
+	step({
+		"id": "chapter_1_start",
+		"map": 1,
+		"trigger": "level_started",
+		"text": "现在准备摧毁所有核心吧。",
+		"highlight": ["enemy_core"],
+	}),
+	step({
+		"id": "enemy_spawned_first",
+		"trigger": "enemy_spawned",
+		"text": "敌人会从敌方核心出现，并向中央核心推进。",
+		"highlight": ["enemy"],
+		"duration": 3.6,
+	}),
+	step({
+		"id": "enemy_core_attackable_first",
+		"trigger": "enemy_core_attackable",
+		"text": "敌方核心已被地形包围，现在可以攻击它了。",
+		"highlight": ["enemy_core"],
+	}),
+	step({
+		"id": "enemy_core_damaged_first",
+		"trigger": "enemy_core_damaged",
+		"text": "继续进攻，摧毁它！",
+		"highlight": ["enemy_core"],
+		"duration": 3.0,
+	}),
+	step({
+		"id": "enemy_core_destroyed_first",
+		"trigger": "enemy_core_destroyed",
+		"text": "敌方核心已摧毁，这个方向的压力会减弱。",
+		"highlight": ["enemy_core"],
+		"duration": 3.6,
+	}),
+	step({
+		"id": "divine_power_first_gain",
+		"trigger": "resource_gained",
+		"text": "神力用于购买地块、升级和迁移神祇。中央核心每回合都会提供基础神力。",
+		"highlight": ["resource"],
+		"duration": 4.0,
+	}),
+	step({
+		"id": "divine_power_not_enough",
+		"trigger": "resource_insufficient",
+		"text": "神力不足。继续战斗，或建造丰饶神获得更多神力。",
+		"highlight": ["resource"],
+		"duration": 3.5,
+	}),
+	step({
 		"id": "swift_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_PLAIN,
 		"deity_type": DEITY_ATTACK,
-		"text": "疾野神会高速攻击单个目标。神祇会自动行动；点击祂可查看范围、属性和操作。",
+		"text": "疾野神：高速单体攻击。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "vitality_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_PLAIN,
 		"deity_type": DEITY_RESOURCE,
-		"text": "盎然神会持续治疗受伤友军。点击祂可查看治疗范围、属性和操作。",
+		"text": "盎然神：持续治疗受伤友军。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "bombard_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_MOUNTAIN,
 		"deity_type": DEITY_ATTACK,
-		"text": "轰爆神会进行远程范围炮击。点击祂可查看攻击范围、属性和操作。",
+		"text": "轰爆神：远程范围伤害。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "stagnation_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_MOUNTAIN,
 		"deity_type": DEITY_RESOURCE,
-		"text": "泞滞神会削弱并控制敌人。点击祂可查看影响范围、属性和操作。",
+		"text": "泞滞神：削弱并控制敌人。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "shard_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_RIVER,
 		"deity_type": DEITY_ATTACK,
-		"text": "澜沧神的攻击会在多个目标间传播。点击祂可查看范围、属性和操作。",
+		"text": "澜沧神：攻击会在多个目标间传播。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "vortex_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_RIVER,
 		"deity_type": DEITY_RESOURCE,
-		"text": "漩涡神会改变敌人的位置与状态。点击祂可查看影响范围、属性和操作。",
+		"text": "漩涡神：改变敌人的位置与状态。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "poison_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_FOREST,
 		"deity_type": DEITY_ATTACK,
-		"text": "蛊郁神会持续施加毒素。点击祂可查看攻击范围、属性和操作。",
+		"text": "蛊郁神：持续施加毒素。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "abundance_god_built",
 		"trigger": "deity_built",
 		"terrain": TERRAIN_FOREST,
 		"deity_type": DEITY_RESOURCE,
-		"text": "丰饶神会持续产生神力。点击祂可查看生产进度、属性和操作。",
+		"text": "丰饶神：持续产生神力。",
 		"highlight": ["deity"],
-		"pause": true,
-		"once": true,
-	},
-	{
-		"id": "prologue_combat_started",
-		"map": 0,
-		"trigger": "combat_started",
-		"text": "疾野神会直接攻击被围住的敌方核心。摧毁它即可完成这一关。",
-		"highlight": ["enemy_core"],
-		"pause": true,
-		"once": true,
-	},
-	{
-		"id": "chapter_1_start",
-		"map": 1,
-		"trigger": "level_started",
-		"text": "现在准备摧毁所有敌方核心吧。",
-		"highlight": ["enemy_core"],
-		"pause": true,
-		"once": true,
-	},
-	{
-		"id": "combat_started_first",
-		"trigger": "combat_started",
-		"text": "敌方将从外围核心出现并向中央核心推进。摧毁全部敌方核心即可获胜；中央核心生命归零则失败。",
-		"highlight": ["enemy_core"],
-		"pause": true,
-		"once": true,
-	},
-	{
-		"id": "enemy_spawned_first",
-		"trigger": "enemy_spawned",
-		"text": "敌人会向中央核心推进。",
-		"highlight": ["enemy"],
-		"duration": 3.0,
-		"once": true,
-	},
-	{
-		"id": "enemy_core_attackable_first",
-		"trigger": "enemy_core_attackable",
-		"text": "缺口已经补上。敌方核心只有被非混沌地形围住后，才会成为神祇的攻击目标。",
-		"highlight": ["enemy_core"],
-		"pause": true,
-		"once": true,
-	},
-	{
-		"id": "enemy_core_damaged_first",
-		"trigger": "enemy_core_damaged",
-		"text": "继续进攻，摧毁敌方核心。",
-		"highlight": ["enemy_core"],
-		"duration": 3.0,
-		"once": true,
-	},
-	{
-		"id": "enemy_core_destroyed_first",
-		"trigger": "enemy_core_destroyed",
-		"text": "敌方压力减弱了。",
-		"highlight": ["enemy_core"],
-		"duration": 3.0,
-		"once": true,
-	},
-	{
-		"id": "divine_power_first_gain",
-		"trigger": "resource_gained",
-		"text": "中央核心会在每轮战斗结束后提供基础神力。神力可购买地块、升级和迁移神祇。",
-		"highlight": ["resource"],
-		"duration": 3.0,
-		"once": true,
-	},
-	{
-		"id": "divine_power_not_enough",
-		"trigger": "resource_insufficient",
-		"text": "神力不足。继续战斗或建造丰饶神获取更多神力。",
-		"highlight": ["resource"],
-		"duration": 3.0,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "deity_operations_first",
 		"trigger": "deity_operation_opened",
-		"text": "点击升级可强化神祇；移除会释放这片神域的位置，但不会返还资源。",
+		"text": "点击神祇可以查看信息。升级会强化能力，移除会释放神域位置但不返还资源。",
 		"highlight": ["operation_buttons"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "deity_upgraded_first",
 		"trigger": "deity_upgraded",
-		"text": "升级完成。点击时间流动，开始第一轮战斗。",
-		"highlight": ["time_button"],
-		"pause": true,
-		"once": true,
-	},
-	{
+		"text": "升级完成。等级越高，能力越强。",
+		"highlight": ["deity"],
+		"duration": 3.4,
+	}),
+	step({
 		"id": "migration_available_first",
 		"trigger": "migration_available",
-		"text": "神域达到4格后可以迁移。点击右侧迁移图标，再选择神祇和同一神域内的目标空格。",
+		"text": "神域较大时可以迁移神祇。迁移只能移动到同一片神域内的空格。",
 		"highlight": ["migration_button"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "deity_migrated_first",
 		"trigger": "deity_migrated",
 		"text": "迁移不会损失等级、生命与充能。",
 		"highlight": ["deity"],
-		"duration": 3.0,
-		"once": true,
-	},
-	{
+		"duration": 3.4,
+	}),
+	step({
 		"id": "deity_removed_first",
 		"trigger": "deity_removed",
-		"text": "移除不会返还资源。",
+		"text": "神祇已移除，这片神域可以重新安置神祇。",
 		"highlight": ["domain"],
-		"duration": 3.0,
-		"once": true,
-	},
-	{
+		"duration": 3.4,
+	}),
+	step({
 		"id": "domain_adjacency_first",
 		"trigger": "domain_adjacency_created",
-		"text": "相邻的异类神域会改变神祇技能。",
+		"text": "相邻神域会改变神祇技能效果。",
 		"highlight": ["domain"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "large_domain_ready_first",
 		"trigger": "large_domain_ready",
-		"text": "大型神域已形成。进入战斗后点击这位神祇，可以释放一次主动技能。",
+		"text": "大型神域已形成。战斗中点击神祇，可以释放主动技能。",
 		"highlight": ["domain"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "large_skill_button_first",
 		"trigger": "large_skill_button_visible",
-		"text": "点击主动技能按钮释放神域能力。",
+		"text": "点击主动技能按钮，释放这片大型神域的能力。",
 		"highlight": ["large_skill_button"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "large_skill_used_first",
 		"trigger": "large_skill_used",
 		"text": "主动技能已发动；每场战斗只能使用一次。",
 		"highlight": ["domain"],
 		"slow_motion": 0.5,
 		"duration": 3.0,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "pollution_first",
 		"trigger": "pollution_created",
-		"text": "敌人在地形上死亡会留下污染。污染达到上限时，地块会崩塌回混沌。",
+		"text": "敌人在地形上死亡会留下污染。污染满后，地块会崩塌回混沌。",
 		"highlight": ["cell"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "river_push_first",
 		"trigger": "enemy_entered_river",
-		"text": "敌人首次进入河流时，会被冲向最近岸边。",
+		"text": "敌人进入河流后，会被水流冲向岸边。",
 		"highlight": ["enemy"],
 		"slow_motion": 0.5,
-		"duration": 3.0,
-		"once": true,
-	},
-	{
+		"duration": 3.5,
+	}),
+	step({
 		"id": "forest_confusion_first",
 		"trigger": "enemy_entered_forest",
-		"text": "敌人首次进入森林时，会短暂迷失方向。",
+		"text": "敌人进入森林后，会在林中迷失方向。",
 		"highlight": ["enemy"],
 		"slow_motion": 0.5,
-		"duration": 3.0,
-		"once": true,
-	},
-	{
+		"duration": 3.5,
+	}),
+	step({
 		"id": "chapter_2_start",
 		"map": 2,
 		"trigger": "level_started",
 		"text": "新地形：山地。山地会阻挡敌人，但不能封死路线。",
 		"highlight": ["map"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "chapter_3_start",
 		"map": 3,
 		"trigger": "level_started",
 		"text": "新地形：河流。用河流把敌人冲送到火力区。",
 		"highlight": ["map"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "chapter_4_start",
 		"map": 4,
 		"trigger": "level_started",
 		"text": "新地形：森林。森林能拖延敌人，也会解锁丰饶神。",
 		"highlight": ["map"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "chapter_5_start",
 		"map": 5,
 		"trigger": "level_started",
 		"text": "不同神域相邻后，神祇会获得新的技能变化。",
 		"highlight": ["domain"],
-		"pause": true,
-		"once": true,
-	},
-	{
+	}),
+	step({
 		"id": "chapter_6_start",
 		"map": 6,
 		"trigger": "level_started",
 		"text": "把神域扩张到 6 格，尝试发动主动技能。",
 		"highlight": ["domain"],
-		"pause": true,
-		"once": true,
-	},
+	}),
 ]

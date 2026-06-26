@@ -1024,25 +1024,18 @@ func _first_living_enemy_core() -> Vector2i:
 	return Vector2i(-1, -1)
 
 
+func first_living_enemy_core() -> Vector2i:
+	return _first_living_enemy_core()
+
+
 func _spawn_cell_for_core(enemy_core_pos: Vector2i) -> Vector2i:
-	var direction := Vector2i(
-		signi(core_pos.x - enemy_core_pos.x),
-		signi(core_pos.y - enemy_core_pos.y)
-	)
-	var candidates: Array[Vector2i] = []
-	if direction.x != 0:
-		candidates.append(enemy_core_pos + Vector2i(direction.x, 0))
-	if direction.y != 0:
-		candidates.append(enemy_core_pos + Vector2i(0, direction.y))
-	if direction.x != 0 and direction.y != 0:
-		candidates.append(enemy_core_pos + direction)
-	for pos in candidates:
-		if not is_in_bounds(pos) or is_enemy_core_slot(pos):
-			continue
-		var cell := get_cell(pos)
-		if not cell.deity and cell.terrain != GameDefinitions.TerrainType.MOUNTAIN:
-			return pos
-	return Vector2i(-1, -1)
+	if not is_in_bounds(enemy_core_pos):
+		return Vector2i(-1, -1)
+	if not enemy_cores.has(enemy_core_pos):
+		return Vector2i(-1, -1)
+	if int((enemy_cores[enemy_core_pos] as Dictionary).get("hp", 0)) <= 0:
+		return Vector2i(-1, -1)
+	return enemy_core_pos
 
 
 func _spawn_from_enemy_core(enemy_core_pos: Vector2i) -> bool:
@@ -1782,7 +1775,6 @@ func _can_relocate_enemy_to(
 	if (
 		not is_in_bounds(pos)
 		or pos == core_pos
-		or is_enemy_core_slot(pos)
 	):
 		return false
 	var cell := get_cell(pos)
@@ -1820,7 +1812,6 @@ func _is_forced_hard_obstacle(pos: Vector2i) -> bool:
 	return (
 		not is_in_bounds(pos)
 		or pos == core_pos
-		or is_enemy_core_slot(pos)
 		or get_cell(pos).terrain == GameDefinitions.TerrainType.MOUNTAIN
 		or get_cell(pos).deity
 	)
@@ -1916,7 +1907,7 @@ func _apply_entered_terrain(origin: Vector2i, target: Vector2i, enemy: EnemyInst
 					else 1.0
 				)
 			)
-			enemy.confusion_steps = int(GameDefinitions.BALANCE.forest_confusion_max_steps)
+			enemy.confusion_steps = 0
 			enemy.confusion_previous = origin
 			tutorial_event.emit("enemy_entered_forest", {"pos": target})
 
@@ -1934,16 +1925,9 @@ func _try_river_push(origin: Vector2i, river_pos: Vector2i, enemy: EnemyInstance
 	var side_b := Vector2i(forward.y, -forward.x)
 	var options: Array[Dictionary] = []
 	for side in [side_a, side_b]:
-		for distance in range(1, int(GameDefinitions.BALANCE.river_push_search_limit) + 1):
-			var candidate: Vector2i = river_pos + side * distance
-			if not is_in_bounds(candidate):
-				break
-			var candidate_cell := get_cell(candidate)
-			if candidate_cell.terrain == GameDefinitions.TerrainType.RIVER:
-				continue
-			if _can_relocate_enemy_to(candidate, false, true):
-				options.append({"pos": candidate, "distance": distance})
-			break
+		var option := _river_push_destination_with_bounce(river_pos, side, enemy)
+		if not option.is_empty():
+			options.append(option)
 	if options.is_empty():
 		var fallback_side := side_a if GameManager.rng.randi_range(0, 1) == 0 else side_b
 		_forced_move_with_bounce(river_pos, fallback_side, enemy, "river")
@@ -1967,8 +1951,44 @@ func _try_river_push(origin: Vector2i, river_pos: Vector2i, enemy: EnemyInstance
 	enemy.river_region_id = -1
 
 
+func _river_push_destination_with_bounce(
+	river_pos: Vector2i,
+	initial_direction: Vector2i,
+	enemy: EnemyInstance
+) -> Dictionary:
+	var direction := initial_direction
+	var cursor := river_pos
+	var travel := 0
+	var bounces := 0
+	var max_steps := int(GameDefinitions.BALANCE.river_push_search_limit) * 3
+	for _step in range(max_steps):
+		var candidate := cursor + direction
+		travel += 1
+		if _is_forced_hard_obstacle(candidate):
+			direction = -direction
+			bounces += 1
+			if bounces > 6:
+				break
+			continue
+		var terrain := get_cell(candidate).terrain
+		if terrain == GameDefinitions.TerrainType.RIVER:
+			cursor = candidate
+			continue
+		if _can_relocate_enemy_to(candidate, false, true, enemy):
+			return {
+				"pos": candidate,
+				"distance": travel,
+				"bounces": bounces,
+			}
+		direction = -direction
+		bounces += 1
+		if bounces > 6:
+			break
+	return {}
+
+
 func _try_forest_confusion_step(origin: Vector2i, enemy: EnemyInstance) -> bool:
-	if enemy.confusion_time <= 0.0 or enemy.confusion_steps <= 0:
+	if enemy.confusion_time <= 0.0:
 		return false
 	var directions: Array[Vector2i] = [
 		Vector2i.RIGHT,
@@ -1990,7 +2010,6 @@ func _try_forest_confusion_step(origin: Vector2i, enemy: EnemyInstance) -> bool:
 		)
 		if target != origin:
 			enemy.confusion_previous = origin
-			enemy.confusion_steps -= 1
 			return true
 	enemy.confusion_time = 0.0
 	return false
@@ -2102,8 +2121,6 @@ func _weighted_path(
 			break
 		for next in neighbors(current):
 			if settled.has(next):
-				continue
-			if next != core_pos and is_enemy_core_slot(next) and next != start:
 				continue
 			var cell := get_cell(next)
 			var terrain := _terrain_for_path(next, terrain_overrides)
@@ -2668,10 +2685,7 @@ func _activate_forest_large_skill(pos: Vector2i) -> void:
 		var enemy := get_cell(enemy_pos).enemy as EnemyInstance
 		if enemy:
 			enemy.confusion_time = float(GameDefinitions.BALANCE.forest_large_skill_duration)
-			enemy.confusion_steps = maxi(
-				2,
-				region.size() * int(GameDefinitions.BALANCE.forest_large_skill_round_trips) * 2
-			)
+			enemy.confusion_steps = 0
 			enemy.forest_region_id = _region_id(enemy_pos)
 			enemy.confusion_previous = Vector2i(-1, -1)
 			enemy.wander_origin = Vector2i(-1, -1)
@@ -2910,11 +2924,45 @@ func _handle_click(pos: Vector2i) -> void:
 		queue_redraw()
 
 
+func _should_show_void_cell(pos: Vector2i) -> bool:
+	if not is_in_bounds(pos):
+		return false
+	var cell := get_cell(pos)
+	if cell.terrain != GameDefinitions.TerrainType.NONE:
+		return true
+	if pos == core_pos or is_enemy_core_slot(pos):
+		return true
+	if cell.anchor_terrain != GameDefinitions.TerrainType.NONE:
+		return true
+	if preview_terrain:
+		for offset in preview_terrain.rotated_shape(preview_rotation):
+			if preview_pos + offset == pos:
+				return true
+	for adjacent in neighbors(pos):
+		if adjacent == core_pos or is_enemy_core_slot(adjacent):
+			return true
+		if is_in_bounds(adjacent) and get_cell(adjacent).terrain != GameDefinitions.TerrainType.NONE:
+			return true
+	return false
+
+
+func _should_show_grid_lines() -> bool:
+	return (
+		preview_terrain
+		or selected_pos != Vector2i(-1, -1)
+		or preview_deity_type >= 0
+		or migration_source != Vector2i(-1, -1)
+		or migration_selecting_source
+	)
+
+
 func _draw() -> void:
 	for y in range(GRID_H):
 		for x in range(GRID_W):
 			var pos := Vector2i(x, y)
 			var cell := get_cell(pos)
+			if cell.terrain == GameDefinitions.TerrainType.NONE and not _should_show_void_cell(pos):
+				continue
 			var rect := Rect2(grid_to_world(pos), Vector2(CELL_SIZE, CELL_SIZE))
 			draw_rect(rect, GameDefinitions.TERRAIN_COLORS[cell.terrain])
 			var terrain_modulate := (
@@ -2933,8 +2981,11 @@ func _draw() -> void:
 					0.0,
 					terrain_modulate
 				)
+				_draw_terrain_edge_overlay(pos, rect, cell.terrain)
+				_mask_exposed_terrain_corners(pos, rect, cell.terrain)
 			if cell.terrain == GameDefinitions.TerrainType.NONE:
-				draw_rect(rect, Color(0.16, 0.18, 0.22, 0.28))
+				if _should_show_grid_lines():
+					draw_rect(rect, Color(0.16, 0.18, 0.22, 0.28))
 			_draw_domain_outer_edges(pos, rect, cell.terrain)
 			if cell.terrain != GameDefinitions.TerrainType.NONE:
 				_draw_terrain_particles(pos, rect, cell.terrain)
@@ -2967,9 +3018,51 @@ func _draw() -> void:
 			_draw_selection_marker(selected_rect)
 
 
+func _draw_terrain_edge_overlay(pos: Vector2i, rect: Rect2, terrain: int) -> void:
+	if terrain not in [
+		GameDefinitions.TerrainType.FOREST,
+		GameDefinitions.TerrainType.RIVER,
+		GameDefinitions.TerrainType.MOUNTAIN,
+	]:
+		return
+	var edge_colors := {
+		GameDefinitions.TerrainType.FOREST: Color(0.16, 0.42, 0.22, 0.28),
+		GameDefinitions.TerrainType.RIVER: Color(0.18, 0.55, 0.82, 0.30),
+		GameDefinitions.TerrainType.MOUNTAIN: Color(0.40, 0.34, 0.30, 0.32),
+	}
+	var color: Color = edge_colors.get(terrain, Color.WHITE)
+	var width := 5.0
+	if _domain_edge_exposed(pos, terrain, Vector2i.UP):
+		draw_rect(Rect2(rect.position, Vector2(rect.size.x, width)), color)
+	if _domain_edge_exposed(pos, terrain, Vector2i.DOWN):
+		draw_rect(Rect2(Vector2(rect.position.x, rect.end.y - width), Vector2(rect.size.x, width)), color)
+	if _domain_edge_exposed(pos, terrain, Vector2i.LEFT):
+		draw_rect(Rect2(rect.position, Vector2(width, rect.size.y)), color)
+	if _domain_edge_exposed(pos, terrain, Vector2i.RIGHT):
+		draw_rect(Rect2(Vector2(rect.end.x - width, rect.position.y), Vector2(width, rect.size.y)), color)
+
+
+func _mask_exposed_terrain_corners(pos: Vector2i, rect: Rect2, terrain: int) -> void:
+	var radius := 14.0
+	var bg := GameDefinitions.TERRAIN_COLORS[GameDefinitions.TerrainType.NONE]
+	var top := _domain_edge_exposed(pos, terrain, Vector2i.UP)
+	var bottom := _domain_edge_exposed(pos, terrain, Vector2i.DOWN)
+	var left := _domain_edge_exposed(pos, terrain, Vector2i.LEFT)
+	var right := _domain_edge_exposed(pos, terrain, Vector2i.RIGHT)
+	if top and left:
+		draw_circle(rect.position, radius, bg)
+	if top and right:
+		draw_circle(Vector2(rect.end.x, rect.position.y), radius, bg)
+	if bottom and left:
+		draw_circle(Vector2(rect.position.x, rect.end.y), radius, bg)
+	if bottom and right:
+		draw_circle(rect.end, radius, bg)
+
+
 func _draw_domain_outer_edges(pos: Vector2i, rect: Rect2, terrain: int) -> void:
 	if terrain == GameDefinitions.TerrainType.NONE:
-		draw_rect(rect.grow(-1.0), Color("353945"), false, 1.0)
+		if _should_show_grid_lines():
+			draw_rect(rect.grow(-1.0), Color("353945"), false, 1.0)
 		return
 	var outline := Color(0.09, 0.11, 0.12, 0.46)
 	var edge_width := 2.2

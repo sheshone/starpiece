@@ -126,6 +126,14 @@ func _run() -> void:
 		_fail("introductory enemy core gap is already filled")
 		return
 	tutorial_manager.clear()
+	game.call("purchase_deity_at", Vector2i(5, 2), Definitions.DeityType.ATTACK)
+	if not map.get_cell(Vector2i(5, 2)).deity:
+		_fail("introductory attack deity could not be placed")
+		return
+	if str(tutorial_manager.active_step.get("id", "")) != "prologue_deity_ready":
+		_fail("placing the introductory deity did not prompt the deity protection hint")
+		return
+	tutorial_manager.clear()
 	game.call("purchase_shop_card", 0)
 	if map.preview_pos != Vector2i(5, 1) or not map.can_place_terrain(map.preview_terrain, map.preview_pos, 0):
 		_fail("introductory card does not point to the final core gap")
@@ -135,18 +143,10 @@ func _run() -> void:
 		return
 	await process_frame
 	if str(tutorial_manager.active_step.get("id", "")) != "prologue_tile_placed":
-		_fail("placing the introductory tile did not prompt deity placement")
+		_fail("placing the introductory tile did not prompt time flow; active=%s" % str(tutorial_manager.active_step.get("id", "")))
 		return
 	tutorial_manager.clear()
-	game.call("purchase_deity_at", Vector2i(5, 1), Definitions.DeityType.ATTACK)
-	if not map.get_cell(Vector2i(5, 1)).deity:
-		_fail("introductory attack deity could not be placed")
-		return
-	if str(tutorial_manager.active_step.get("id", "")) != "prologue_deity_ready":
-		_fail("placing the introductory deity did not prompt time flow")
-		return
-	tutorial_manager.clear()
-	map.call("_attack_enemy_core", Vector2i(5, 1), intro_core, int(Definitions.BALANCE.enemy_core_hp))
+	map.call("_attack_enemy_core", Vector2i(5, 2), intro_core, int(Definitions.BALANCE.enemy_core_hp))
 	await process_frame
 	await process_frame
 	if int(progress_manager.current_map) != 1:

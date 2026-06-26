@@ -437,6 +437,16 @@ func _build_home_settings_page(parent: VBoxContainer) -> void:
 		fullscreen.text = "窗口" if _is_fullscreen() else "全屏"
 	)
 	parent.add_child(fullscreen)
+	var reset_tutorial := Button.new()
+	reset_tutorial.text = "清除新手引导记录"
+	reset_tutorial.custom_minimum_size = Vector2(190, 42)
+	AssetCatalog.apply_button_visual(reset_tutorial)
+	reset_tutorial.pressed.connect(func() -> void:
+		AudioManager.play_sfx_first(["button_help", "refresh"], -4.0)
+		TutorialManager.reset_seen_for_testing()
+		TutorialManager.clear()
+	)
+	parent.add_child(reset_tutorial)
 	var quit := Button.new()
 	quit.text = "退出到桌面"
 	quit.custom_minimum_size = Vector2(150, 42)

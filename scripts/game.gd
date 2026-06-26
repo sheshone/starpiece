@@ -240,7 +240,17 @@ func purchase_deity_at(pos: Vector2i, deity_type: int) -> void:
 			"deity_type": deity_type,
 			"pos": pos,
 		})
-		if ProgressManager.current_map != 0:
+		if ProgressManager.current_map == 0:
+			var guide_tween := create_tween()
+			guide_tween.tween_interval(4.2)
+			guide_tween.tween_callback(func() -> void:
+				TutorialManager.trigger("prologue_enemy_core_unsealed", {"pos": grid_map.first_living_enemy_core()})
+			)
+			guide_tween.tween_interval(4.2)
+			guide_tween.tween_callback(func() -> void:
+				TutorialManager.trigger("prologue_buy_tile", {"pos": grid_map.first_living_enemy_core()})
+			)
+		else:
 			TutorialManager.trigger(_deity_tutorial_trigger(terrain, deity_type), {
 				"terrain": terrain,
 				"deity_type": deity_type,
@@ -298,6 +308,10 @@ func begin_deity_migration_selection() -> void:
 
 func _reveal_gameplay() -> void:
 	var map_target_scale := grid_map.scale
+	grid_map.modulate.a = 0.0
+	map_frame.modulate.a = 0.0
+	game_ui.modulate.a = 0.0
+	hand_ui.modulate.a = 0.0
 	grid_map.scale = map_target_scale * 0.86
 	var tween := create_tween()
 	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
@@ -388,6 +402,7 @@ func _start_second_map(id: String) -> void:
 	ResourceManager.reset()
 	grid_map.reset_board()
 	TurnManager.start_game_loop()
+	_reveal_gameplay()
 	TutorialManager.trigger("level_started", {"map": ProgressManager.current_map})
 	if ProgressManager.blessing_value("random_domino") > 0.0:
 		_grant_random_domino()
@@ -467,6 +482,12 @@ func _grant_random_domino() -> void:
 
 
 func _return_to_menu() -> void:
+	TutorialManager.clear()
+	TurnManager.finish_game()
+	GameManager.is_game_running = false
+	get_tree().paused = false
+	Engine.time_scale = 1.0
+	ProgressManager.save_current_run()
 	get_tree().reload_current_scene()
 
 
@@ -518,14 +539,6 @@ func _check_tutorial_domain_events() -> void:
 
 func _check_tutorial_operational_events() -> void:
 	if ProgressManager.current_map == 0:
-		for core_pos in grid_map.enemy_cores:
-			var core_data: Dictionary = grid_map.enemy_cores[core_pos]
-			if (
-				int(core_data.get("hp", 0)) > 0
-				and grid_map._enemy_core_is_surrounded_by_terrain(core_pos)
-			):
-				TutorialManager.trigger("enemy_core_attackable", {"pos": core_pos})
-				break
 		return
 	var deity_positions := grid_map.get_all_deity_positions()
 	var deity_count := deity_positions.size()
